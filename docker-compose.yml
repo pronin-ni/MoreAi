@@ -2,7 +2,6 @@ version: '3.8'
 
 services:
   moreai-proxy:
-    container_name: moreai-proxy
     build:
       context: .
       dockerfile: Dockerfile
@@ -17,8 +16,6 @@ services:
     volumes:
       - ./artifacts:/app/artifacts
     restart: unless-stopped
-    networks:
-      - proxy-network
 
 networks:
   proxy-network:
