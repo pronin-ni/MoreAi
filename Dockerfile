@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
+COPY app/ ./app/
 RUN pip install uv && uv sync --all-extras
 
 RUN .venv/bin/python -m playwright install --with-deps chromium
