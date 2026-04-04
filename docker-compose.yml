@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  moreai-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - INTERNAL_CHAT_URL=${INTERNAL_CHAT_URL:-https://chat.qwen.ai/}
+      - HEADLESS=${HEADLESS:-true}
+      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-5}
+      - RESPONSE_TIMEOUT_SECONDS=${RESPONSE_TIMEOUT_SECONDS:-120}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./artifacts:/app/artifacts
+    restart: unless-stopped
