@@ -278,6 +278,56 @@ Covered areas:
 - diagnostics endpoint
 - disabled integrations without API key
 
+## Web UI
+
+The project includes a built-in web UI for interactive testing of models. It's served by the same FastAPI application.
+
+### Access
+
+The UI is available at: `http://localhost:8000/ui`
+
+### Features
+
+- **Model Selection**: Browse browser and API models with search/filter
+- **Chat Interface**: Send messages and receive responses with markdown rendering
+- **Diagnostics Panel**: View transport, provider, duration, and usage information
+- **HTMX-powered**: Uses HTMX for dynamic interactions without JavaScript framework
+- **Responsive Design**: Works on desktop, tablet, and mobile
+- **Dark Mode**: Automatic support for system dark/light theme
+
+### Technology Stack
+
+- **FastAPI**: Python web framework
+- **Jinja2**: Server-side templating
+- **HTMX**: Dynamic HTML interactions
+- **Markdown + Bleach**: Safe markdown rendering for responses
+- **Vanilla CSS**: Custom modern styling (no heavy frameworks)
+- **Vanilla JavaScript**: Minimal client-side logic
+
+### Architecture
+
+- `app/api/routes_ui.py`: UI routes (`/ui`, `/ui/models`, `/ui/chat`, `/ui/diagnostics`)
+- `app/services/model_registry_service.py`: Model data preparation for templates
+- `app/templates/`: Jinja2 templates (base, index, partials)
+- `app/static/`: CSS, JavaScript, and vendor libraries
+
+### Integration with API
+
+The UI uses the same backend services as the OpenAI-compatible API:
+
+- Models are loaded from `unified_registry.list_models()`
+- Chat requests go through `chat_proxy_service.process_completion()`
+- This ensures consistent behavior between API and UI
+
+### Customization
+
+CSS variables in `app/static/css/style.css` control the appearance:
+
+- Colors (light/dark themes)
+- Layout dimensions
+- Typography
+- Spacing and borders
+
 ## Development Notes
 
 If you want to add a new integration when `ready_to_use.html` changes:

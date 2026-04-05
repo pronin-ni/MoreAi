@@ -3,7 +3,7 @@ name = "moreai-proxy"
 version = "0.1.0"
 description = "OpenAI-compatible API proxy with browser automation for Qwen Chat"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "MIT"
 authors = [{name = "Development Team"}]
 
@@ -27,18 +27,22 @@ dependencies = [
     "httpx>=0.26.0",
     "python-dotenv>=1.0.0",
     "structlog>=24.1.0",
+    "jinja2>=3.1.0",
+    "markdown>=3.5.0",
+    "bleach>=6.1.0",
+    "python-multipart>=0.0.6",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = false
 warn_return_any = true
 warn_unused_ignores = true

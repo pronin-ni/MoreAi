@@ -4,8 +4,10 @@ import app.browser.providers  # noqa: F401
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes_openai import router as openai_router
+from app.api.routes_ui import router as ui_router
 from app.browser.session_pool import pool
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -62,6 +64,8 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
 
 
 app.include_router(openai_router)
+app.include_router(ui_router)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 @app.get("/")

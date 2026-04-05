@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}MoreAI - Proxy UI{% endblock %}
+
+{% block extra_head %}
+<style>
+.hx-indicator { opacity: 0; transition: opacity 200ms; }
+.hx-request .hx-indicator { opacity: 1; }
+.hx-request .hx-btn { opacity: 0.5; pointer-events: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<aside class="sidebar" id="models-panel">
+    <div class="sidebar-header">
+        <h2>Models</h2>
+        <button
+            class="btn-icon"
+            hx-get="/ui/models?selected={{ selected_model }}"
+            hx-target="#models-panel"
+            hx-swap="outerHTML"
+            title="Refresh models"
+        >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+        </button>
+    </div>
+    
+    <div class="search-box">
+        <input
+            type="text"
+            name="q"
+            placeholder="Search models..."
+            hx-get="/ui/models?selected={{ selected_model }}"
+            hx-target="#models-panel"
+            hx-trigger="input changed delay:200ms"
+            hx-swap="outerHTML"
+            hx-sync="this:replace"
+            value="{{ search_query }}"
+        >
+    </div>
+
+    {% include "partials/models_list.html" %}
+</aside>
+
+<main class="chat-panel">
+    <div class="chat-header">
+        <div class="chat-model-badge">
+            <span class="badge badge-{{ selected_transport }}">{{ selected_transport|upper }}</span>
+            <span class="model-name">{{ selected_model }}</span>
+        </div>
+        <button
+            class="btn-text"
+            hx-post="/ui/chat"
+            hx-vals='{"action": "clear"}'
+            hx-target="body"
+            hx-swap="none"
+            title="Clear chat"
+        >
+            Clear
+        </button>
+    </div>
+
+    <div class="chat-messages" id="chat-messages">
+        {% if messages %}
+            {% include "partials/chat_messages.html" %}
+        {% else %}
+            <div class="empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                </svg>
+                <h3>Start a conversation</h3>
+                <p>Select a model from the sidebar and send a message to begin.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <form
+        class="chat-input-form"
+        id="chat-form"
+        hx-post="/ui/chat"
+        hx-target="#chat-response-target"
+        hx-swap="afterend"
+        hx-sync="this:queue"
+    >
+        <input type="hidden" name="model" value="{{ selected_model }}">
+        <input type="hidden" name="conversation_json" value="{{ conversation_json }}">
+        
+        <div class="chat-input-wrapper">
+            <textarea
+                name="message"
+                placeholder="Type your message..."
+                rows="1"
+                {%
+                if not selected_model
+                %}disabled{%
+                endif
+                %}
+                {%
+                if messages
+                %}autofocus{%
+                endif
+                %}
+                hx-on:input="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"
+                hx-on:keydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if(this.value.trim()) { document.getElementById('chat-form').requestSubmit(); } }"
+            ></textarea>
+            <button
+                type="submit"
+                class="btn-send"
+                {%
+                if not selected_model
+                %}disabled{%
+                endif
+                %}
+            >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="hx-indicator">
+            <span class="spinner"></span>
+            <span>Sending...</span>
+        </div>
+    </form>
+    
+    <div id="chat-response-target"></div>
+</main>
+
+<aside class="diagnostics-panel" id="diagnostics-panel">
+    <div class="diagnostics-header">
+        <h3>Diagnostics</h3>
+    </div>
+    
+    {% include "partials/diagnostics.html" %}
+</aside>
+{% endblock %}

@@ -1,0 +1,133 @@
+document.addEventListener('DOMContentLoaded', function() {
+    initModelSelection();
+    initChatInput();
+    initCopyButtons();
+    initDiagnosticsToggle();
+});
+
+function initModelSelection() {
+    const savedModel = localStorage.getItem('selected_model');
+    if (savedModel) {
+        const radio = document.querySelector(`input[name="model_selection"][value="${savedModel}"]`);
+        if (radio) {
+            radio.checked = true;
+            selectModel(savedModel);
+        }
+    }
+}
+
+function selectModel(modelId) {
+    localStorage.setItem('selected_model', modelId);
+    
+    const modelInput = document.querySelector('input[name="model"]');
+    const textarea = document.querySelector('textarea[name="message"]');
+    const submitBtn = document.querySelector('.btn-send');
+    
+    if (modelInput) {
+        modelInput.value = modelId;
+    }
+    if (textarea) {
+        textarea.disabled = false;
+        textarea.focus();
+    }
+    if (submitBtn) {
+        submitBtn.disabled = false;
+    }
+    
+    updateDiagnostics(modelId);
+}
+
+function updateDiagnostics(modelId) {
+    fetch(`/ui/diagnostics?model=${encodeURIComponent(modelId)}`)
+        .then(r => r.text())
+        .then(html => {
+            const panel = document.getElementById('diagnostics-panel');
+            if (panel) {
+                panel.innerHTML = html;
+            }
+        })
+        .catch(err => console.error('Failed to update diagnostics:', err));
+}
+
+function initChatInput() {
+    const textarea = document.querySelector('textarea[name="message"]');
+    if (!textarea) return;
+    
+    textarea.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const form = document.getElementById('chat-form');
+            if (form && this.value.trim()) {
+                form.requestSubmit();
+            }
+        }
+    });
+    
+    textarea.addEventListener('input', function() {
+        this.style.height = '';
+        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    });
+}
+
+function initCopyButtons() {
+    window.copyMessage = function(btn) {
+        const messageContent = btn.closest('.message-actions').previousElementSibling;
+        const text = messageContent.innerText;
+        
+        navigator.clipboard.writeText(text).then(() => {
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+            }, 1500);
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+        });
+    };
+}
+
+function initDiagnosticsToggle() {
+    const panel = document.querySelector('.diagnostics-panel');
+    if (!panel) return;
+    
+    const header = panel.querySelector('.diagnostics-header');
+    if (!header) return;
+    
+    header.addEventListener('click', function() {
+        panel.classList.toggle('expanded');
+    });
+}
+
+window.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.requestConfig.method === 'POST' && evt.detail.requestConfig.url === '/ui/chat') {
+        const textarea = document.querySelector('textarea[name="message"]');
+        if (textarea) {
+            textarea.value = '';
+            textarea.style.height = '';
+        }
+    }
+});
+
+document.body.addEventListener('htmx:configRequest', function(evt) {
+    if (evt.detail.requestConfig.method === 'POST' && evt.detail.requestConfig.url === '/ui/chat') {
+        const convInput = document.querySelector('input[name="conversation_json"]');
+        if (convInput) {
+            let messages = [];
+            try {
+                messages = JSON.parse(convInput.value || '[]');
+            } catch (e) {
+                messages = [];
+            }
+            
+            const textarea = document.querySelector('textarea[name="message"]');
+            if (textarea && textarea.value.trim()) {
+                messages.push({
+                    role: 'user',
+                    content: textarea.value.trim(),
+                    timestamp: new Date().toISOString()
+                });
+                convInput.value = JSON.stringify(messages);
+            }
+        }
+    }
+});

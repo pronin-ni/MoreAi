@@ -1,0 +1,18 @@
+{% if error_message %}
+<div class="message message-assistant error-message" id="chat-messages">
+    <div class="message-header">
+        <span class="message-role">Error</span>
+    </div>
+    <div class="message-content error-content">
+        {{ error_message }}
+    </div>
+</div>
+{% elif last_response %}
+<div id="chat-messages" hx-swap-oob="innerHTML">
+    {% include "partials/chat_messages.html" %}
+</div>
+{% endif %}
+
+<div id="diagnostics-panel" hx-swap-oob="innerHTML">
+    {% include "partials/diagnostics.html" %}
+</div>

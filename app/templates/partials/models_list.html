@@ -1,0 +1,107 @@
+{% if browser_models or api_models %}
+<div class="models-list">
+    {% if browser_models %}
+    <div class="model-group">
+        <div class="model-group-header">
+            <span class="badge badge-browser">Browser</span>
+            <span class="model-count">{{ browser_models|length }}</span>
+        </div>
+        <ul>
+        {% for model in browser_models %}
+            <li class="model-item {% if model.id == selected_model %}selected{% endif %} {% if not model.is_selectable %}disabled{% endif %}">
+                <label class="model-label {% if not model.is_selectable %}model-unavailable{% endif %}">
+                    <input
+                        type="radio"
+                        name="model_selection"
+                        value="{{ model.id }}"
+                        {%
+                        if model.id == selected_model
+                        %}checked{%
+                        endif
+                        %}
+                        {%
+                        if not model.is_selectable
+                        %}disabled{%
+                        endif
+                        %}
+                        {%
+                        if model.is_selectable
+                        %}onclick="selectModel('{{ model.id }}')"{%
+                        endif
+                        %}
+                    >
+                    <span class="model-display-name">{{ model.display_name }}</span>
+                    {% if model.id == selected_model %}
+                    <span class="badge badge-selected">Selected</span>
+                    {% endif %}
+                    {% if not model.available %}
+                    <span class="badge badge-unavailable">Unavailable</span>
+                    {% elif not model.enabled %}
+                    <span class="badge badge-disabled">Disabled</span>
+                    {% endif %}
+                </label>
+            </li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if api_models %}
+    <div class="model-group">
+        <div class="model-group-header">
+            <span class="badge badge-api">API</span>
+            <span class="model-count">{{ api_models|length }}</span>
+        </div>
+        <ul>
+        {% for model in api_models %}
+            <li class="model-item {% if model.id == selected_model %}selected{% endif %} {% if not model.is_selectable %}disabled{% endif %}">
+                <label class="model-label {% if not model.is_selectable %}model-unavailable{% endif %}">
+                    <input
+                        type="radio"
+                        name="model_selection"
+                        value="{{ model.id }}"
+                        {%
+                        if model.id == selected_model
+                        %}checked{%
+                        endif
+                        %}
+                        {%
+                        if not model.is_selectable
+                        %}disabled{%
+                        endif
+                        %}
+                        {%
+                        if model.is_selectable
+                        %}onclick="selectModel('{{ model.id }}')"{%
+                        endif
+                        %}
+                    >
+                    <span class="model-display-name">{{ model.display_name }}</span>
+                    {% if model.id == selected_model %}
+                    <span class="badge badge-selected">Selected</span>
+                    {% endif %}
+                    {% if not model.available %}
+                    <span class="badge badge-unavailable">Unavailable</span>
+                    {% elif not model.enabled %}
+                    <span class="badge badge-disabled">Disabled</span>
+                    {% endif %}
+                </label>
+            </li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="empty-models">
+    <p>No models available.</p>
+    <button
+        class="btn-secondary"
+        hx-get="/ui/models"
+        hx-target="#models-panel"
+        hx-swap="outerHTML"
+    >
+        Refresh
+    </button>
+</div>
+{% endif %}
