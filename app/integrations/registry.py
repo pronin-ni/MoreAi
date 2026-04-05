@@ -1,7 +1,11 @@
 import time
 
 from app.core.logging import get_logger
-from app.integrations.adapters import ClientBasedIntegration, OpenAICompatibleIntegration
+from app.integrations.adapters import (
+    ClientBasedIntegration,
+    OllamaFreeAPIIntegration,
+    OpenAICompatibleIntegration,
+)
 from app.integrations.config import load_integrations_config
 from app.integrations.definitions import READY_TO_USE_DEFINITIONS
 from app.integrations.types import IntegrationDefinition, ModelDefinition, ResolvedModel
@@ -26,11 +30,7 @@ class APIRegistry:
 
         for definition in self._definitions.values():
             runtime_config = config_snapshot.by_integration[definition.integration_id]
-            adapter_cls = (
-                ClientBasedIntegration
-                if definition.integration_type == "client_based"
-                else OpenAICompatibleIntegration
-            )
+            adapter_cls = self._adapter_class_for(definition)
             adapter = adapter_cls(definition, runtime_config)
             self._adapters[definition.integration_id] = adapter
 
@@ -139,6 +139,13 @@ class APIRegistry:
 
     def discovered_models(self) -> list[str]:
         return sorted(self._models.keys())
+
+    def _adapter_class_for(self, definition: IntegrationDefinition):
+        if definition.integration_id == "ollamafreeapi":
+            return OllamaFreeAPIIntegration
+        if definition.integration_type == "client_based":
+            return ClientBasedIntegration
+        return OpenAICompatibleIntegration
 
 
 api_registry = APIRegistry()

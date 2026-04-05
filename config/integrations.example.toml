@@ -85,3 +85,8 @@ enabled = false
 
 [integrations.g4f_client_perplexity]
 enabled = false
+
+[integrations.ollamafreeapi]
+enabled = true
+discover_models = true
+timeout_seconds = 20

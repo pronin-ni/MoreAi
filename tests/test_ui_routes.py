@@ -1,6 +1,5 @@
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 
@@ -34,6 +33,20 @@ class TestUIIndex:
             assert "models-panel" in response.text
             assert "chat-messages" in response.text
             assert "diagnostics-panel" in response.text
+
+    def test_ui_index_prefills_selected_model(self):
+        from app.main import app
+
+        with (
+            patch("app.main.pool.initialize", new=AsyncMock()),
+            patch("app.main.pool.shutdown", new=AsyncMock()),
+            patch("app.main.unified_registry.initialize", new=AsyncMock()),
+        ):
+            client = TestClient(app)
+            response = client.get("/ui")
+
+            assert 'input type="hidden" name="model" value="' in response.text
+            assert 'input type="hidden" name="model" value=""' not in response.text
 
 
 class TestUIModels:

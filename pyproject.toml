@@ -7,21 +7,11 @@ requires-python = ">=3.14"
 license = "MIT"
 authors = [{name = "Development Team"}]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.1.0",
-    "httpx>=0.27.0",
-    "respx>=0.21.0",
-    "ruff>=0.3.0",
-    "mypy>=1.8.0",
-]
-
 dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "playwright>=1.41.0",
+    "ollamafreeapi>=0.1.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "httpx>=0.26.0",
@@ -31,6 +21,17 @@ dependencies = [
     "markdown>=3.5.0",
     "bleach>=6.1.0",
     "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.27.0",
+    "respx>=0.21.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
 ]
 
 [tool.ruff]

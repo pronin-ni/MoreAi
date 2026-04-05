@@ -313,14 +313,13 @@ wheels = [
 name = "moreai-proxy"
 version = "0.1.0"
 source = { virtual = "." }
-
-[package.optional-dependencies]
 dependencies = [
     { name = "bleach" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "markdown" },
+    { name = "ollamafreeapi" },
     { name = "playwright" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -329,6 +328,8 @@ dependencies = [
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
 ]
+
+[package.optional-dependencies]
 dev = [
     { name = "httpx" },
     { name = "mypy" },
@@ -341,27 +342,28 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bleach", marker = "extra == 'dependencies'", specifier = ">=6.1.0" },
-    { name = "fastapi", marker = "extra == 'dependencies'", specifier = ">=0.109.0" },
-    { name = "httpx", marker = "extra == 'dependencies'", specifier = ">=0.26.0" },
+    { name = "bleach", specifier = ">=6.1.0" },
+    { name = "fastapi", specifier = ">=0.109.0" },
+    { name = "httpx", specifier = ">=0.26.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
-    { name = "jinja2", marker = "extra == 'dependencies'", specifier = ">=3.1.0" },
-    { name = "markdown", marker = "extra == 'dependencies'", specifier = ">=3.5.0" },
+    { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "markdown", specifier = ">=3.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
-    { name = "playwright", marker = "extra == 'dependencies'", specifier = ">=1.41.0" },
-    { name = "pydantic", marker = "extra == 'dependencies'", specifier = ">=2.5.0" },
-    { name = "pydantic-settings", marker = "extra == 'dependencies'", specifier = ">=2.1.0" },
+    { name = "ollamafreeapi", specifier = ">=0.1.0" },
+    { name = "playwright", specifier = ">=1.41.0" },
+    { name = "pydantic", specifier = ">=2.5.0" },
+    { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
-    { name = "python-dotenv", marker = "extra == 'dependencies'", specifier = ">=1.0.0" },
-    { name = "python-multipart", marker = "extra == 'dependencies'", specifier = ">=0.0.6" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "structlog", marker = "extra == 'dependencies'", specifier = ">=24.1.0" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'dependencies'", specifier = ">=0.27.0" },
+    { name = "structlog", specifier = ">=24.1.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
 ]
-provides-extras = ["dev", "dependencies"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "mypy"
@@ -399,6 +401,31 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2025-04-22T14:54:24.164Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
+]
+
+[[package]]
+name = "ollama"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/5a/652dac4b7affc2b37b95386f8ae78f22808af09d720689e3d7a86b6ed98e/ollama-0.6.1.tar.gz", hash = "sha256:478c67546836430034b415ed64fa890fd3d1ff91781a9d548b3325274e69d7c6", size = 51620, upload-time = "2025-11-13T23:02:17.416Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/4f/4a617ee93d8208d2bcf26b2d8b9402ceaed03e3853c754940e2290fed063/ollama-0.6.1-py3-none-any.whl", hash = "sha256:fc4c984b345735c5486faeee67d8a265214a31cbb828167782dc642ce0a2bf8c", size = 14354, upload-time = "2025-11-13T23:02:16.292Z" },
+]
+
+[[package]]
+name = "ollamafreeapi"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ollama" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ba/43/af53005b1e0167ae8cd4c14c7944b167242af7afd58f40046de2b5dcee3b/ollamafreeapi-0.1.4.tar.gz", hash = "sha256:f2aeaecafa0ef77509995468b161d17031f75cd34950eb9aafaa1bdfa6e4e3ed", size = 12415, upload-time = "2026-03-24T14:45:04.778Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/37/f1a7337cda12792304d3d8f251d141c5febb308bcc33a8634d1c846ad59f/ollamafreeapi-0.1.4-py3-none-any.whl", hash = "sha256:824ff0489522112091e356ddfab18fc511f3a76c4f199c9858d7ca05a2ea8187", size = 12609, upload-time = "2026-03-24T14:45:03.966Z" },
 ]
 
 [[package]]

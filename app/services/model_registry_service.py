@@ -45,10 +45,11 @@ class ModelRegistryService:
                 )
             else:
                 provider_id = m.get("provider_id", "")
-                if "/" in provider_id:
-                    display_name = provider_id.split("/", 1)[-1].replace("-", " ").title()
-                elif provider_id:
-                    display_name = provider_id.replace("_", " ").title()
+                upstream_model = model_id.split("/", 2)[-1]
+                if provider_id:
+                    display_name = f"{provider_id.replace('_', ' ').title()} | {upstream_model}"
+                else:
+                    display_name = upstream_model
 
             aliases = m.get("aliases", [])
 

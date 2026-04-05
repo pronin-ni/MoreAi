@@ -61,6 +61,14 @@ class TestCreateModelList:
                 "enabled": True,
                 "available": True,
             },
+            {
+                "id": "api/ollamafreeapi/llama3.3:70b",
+                "provider_id": "ollamafreeapi",
+                "transport": "api",
+                "source_type": "client_based",
+                "enabled": True,
+                "available": True,
+            },
         ],
     )
     def test_creates_valid_model_list(self, _mock_list_models):
@@ -68,11 +76,12 @@ class TestCreateModelList:
 
         assert isinstance(model_list, ModelList)
         assert model_list.object == "list"
-        assert len(model_list.data) == 2
+        assert len(model_list.data) == 3
 
         model_ids = [m.id for m in model_list.data]
         assert "browser/qwen" in model_ids
         assert "api/g4f-auto/default" in model_ids
+        assert "api/ollamafreeapi/llama3.3:70b" in model_ids
 
     @patch(
         "app.registry.unified.unified_registry.list_models",

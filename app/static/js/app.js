@@ -7,31 +7,80 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function initModelSelection() {
     const savedModel = localStorage.getItem('selected_model');
+    let radio = null;
+
     if (savedModel) {
-        const radio = document.querySelector(`input[name="model_selection"][value="${savedModel}"]`);
-        if (radio) {
-            radio.checked = true;
-            selectModel(savedModel);
-        }
+        radio = document.querySelector(`input[name="model_selection"][value="${savedModel}"]`);
+    }
+
+    if (!radio) {
+        radio = document.querySelector('input[name="model_selection"]:checked')
+            || document.querySelector('input[name="model_selection"]:not(:disabled)');
+    }
+
+    if (radio) {
+        radio.checked = true;
+        selectModel(radio.value);
     }
 }
 
 function selectModel(modelId) {
     localStorage.setItem('selected_model', modelId);
-    
+
     const modelInput = document.querySelector('input[name="model"]');
     const textarea = document.querySelector('textarea[name="message"]');
     const submitBtn = document.querySelector('.btn-send');
-    
+    const selectedRadio = document.querySelector(`input[name="model_selection"][value="${modelId}"]`);
+    const selectedModelInput = document.getElementById('models-selected-input');
+    const modelName = document.querySelector('.model-name');
+    const selectedModelDisplay = document.querySelector('.selected-model-display');
+    const currentSelectionDisplay = document.querySelector('.current-selection-display');
+    const currentSelectionId = document.querySelector('.current-selection-id');
+    const transportBadge = document.querySelector('.chat-model-badge .badge');
+    const searchInput = document.getElementById('models-search-input');
+    const displayName = selectedRadio?.dataset.displayName || modelId;
+
+    if (selectedRadio) {
+        selectedRadio.checked = true;
+        selectedRadio.closest('.model-item')?.scrollIntoView({ block: 'nearest' });
+    }
+
     if (modelInput) {
         modelInput.value = modelId;
     }
+    if (selectedModelInput) {
+        selectedModelInput.value = modelId;
+    }
     if (textarea) {
         textarea.disabled = false;
+        textarea.placeholder = `Message ${displayName}...`;
         textarea.focus();
     }
     if (submitBtn) {
         submitBtn.disabled = false;
+    }
+
+    if (modelName) {
+        modelName.textContent = modelId;
+    }
+    if (selectedModelDisplay) {
+        selectedModelDisplay.textContent = displayName;
+    }
+    if (currentSelectionDisplay) {
+        currentSelectionDisplay.textContent = displayName;
+    }
+    if (currentSelectionId) {
+        currentSelectionId.textContent = modelId;
+    }
+
+    if (transportBadge && selectedRadio) {
+        const transport = selectedRadio.dataset.transport || '';
+        transportBadge.className = `badge badge-${transport}`;
+        transportBadge.textContent = transport.toUpperCase();
+    }
+
+    if (searchInput && !searchInput.value) {
+        searchInput.blur();
     }
     
     updateDiagnostics(modelId);
@@ -98,8 +147,15 @@ function initDiagnosticsToggle() {
     });
 }
 
+function isUiChatRequest(detail) {
+    const requestConfig = detail?.requestConfig;
+    const verb = requestConfig?.verb || requestConfig?.method || '';
+    const path = detail?.pathInfo?.requestPath || requestConfig?.path || requestConfig?.url || '';
+    return verb.toUpperCase() === 'POST' && path === '/ui/chat';
+}
+
 window.addEventListener('htmx:afterRequest', function(evt) {
-    if (evt.detail.requestConfig.method === 'POST' && evt.detail.requestConfig.url === '/ui/chat') {
+    if (isUiChatRequest(evt.detail)) {
         const textarea = document.querySelector('textarea[name="message"]');
         if (textarea) {
             textarea.value = '';
@@ -109,7 +165,7 @@ window.addEventListener('htmx:afterRequest', function(evt) {
 });
 
 document.body.addEventListener('htmx:configRequest', function(evt) {
-    if (evt.detail.requestConfig.method === 'POST' && evt.detail.requestConfig.url === '/ui/chat') {
+    if (isUiChatRequest(evt.detail)) {
         const convInput = document.querySelector('input[name="conversation_json"]');
         if (convInput) {
             let messages = [];
@@ -129,5 +185,11 @@ document.body.addEventListener('htmx:configRequest', function(evt) {
                 convInput.value = JSON.stringify(messages);
             }
         }
+    }
+});
+
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.target?.id === 'models-panel') {
+        initModelSelection();
     }
 });

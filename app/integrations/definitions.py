@@ -3,7 +3,6 @@ from pathlib import Path
 from app.integrations.parser_ready_to_use import parse_ready_to_use_markdown
 from app.integrations.types import IntegrationDefinition
 
-
 SNAPSHOT_PATH = Path(__file__).with_name("ready_to_use_snapshot.md")
 
 
@@ -101,6 +100,21 @@ def build_integration_definitions() -> list[IntegrationDefinition]:
                 fallback_models=["default"] if display_name not in client_defaults else [],
             )
         )
+
+    definitions.append(
+        IntegrationDefinition(
+            integration_id="ollamafreeapi",
+            display_name="OllamaFreeAPI",
+            integration_type="client_based",
+            group="individual_client",
+            source_type="client_based",
+            base_url=None,
+            api_key_requirement="none",
+            notes="Python client-based free distributed Ollama API",
+            enabled_by_default=True,
+            default_timeout_seconds=60,
+        )
+    )
 
     return definitions
 

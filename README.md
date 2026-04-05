@@ -3,7 +3,7 @@
 OpenAI-compatible FastAPI proxy with two execution transports behind one unified model namespace:
 
 1. `browser/*` for Playwright/browser providers
-2. `api/*` for OpenAI-compatible upstream APIs and g4f integrations
+2. `api/*` for OpenAI-compatible upstream APIs, g4f integrations, and client-based API providers
 
 ## Namespace
 
@@ -35,6 +35,7 @@ Examples:
 - `api/g4f-groq/llama-3.3-70b`
 - `api/g4f-auto/default`
 - `api/openrouter/gpt-4o-mini`
+- `api/ollamafreeapi/llama3.3:70b`
 
 ## Architecture
 
@@ -44,7 +45,7 @@ The routing stack is split into three layers:
 Browser-only Playwright providers.
 
 2. `api_registry`
-OpenAI-compatible and client-based integrations discovered from `g4f.dev/docs/ready_to_use.html`.
+OpenAI-compatible integrations discovered from `g4f.dev/docs/ready_to_use.html` plus explicit client-based providers such as `ollamafreeapi`.
 
 3. `unified_registry`
 Facade that aggregates browser and API models, resolves aliases, and returns execution strategy.
@@ -97,8 +98,17 @@ Source of truth: `https://g4f.dev/docs/ready_to_use.html`
 - `g4f-client-gemini`
 - `g4f-client-openai-chat`
 - `g4f-client-perplexity`
+- `ollamafreeapi`
 
 Client-based integrations are represented separately from OpenAI-compatible upstreams, even when a client can reuse the same HTTP adapter internally.
+
+`ollamafreeapi` is intentionally separate from both browser providers and `g4f-*` integrations:
+
+- transport: `api`
+- source type: `client_based`
+- canonical namespace: `api/ollamafreeapi/<upstream_model>`
+- discovery source: `OllamaFreeAPI.list_models()`
+- completion path: `OllamaFreeAPI.chat()`
 
 ## Configuration
 
@@ -138,6 +148,11 @@ api_key = ""
 [integrations.g4f_auto]
 enabled = true
 fallback_models = ["default"]
+
+[integrations.ollamafreeapi]
+enabled = true
+discover_models = true
+timeout_seconds = 20
 ```
 
 Behavior rules:
@@ -147,6 +162,7 @@ Behavior rules:
 3. `G4F_API_KEY` is applied automatically to every `g4f-*` integration unless a more specific `INTEGRATION_<ID>_API_KEY` env override exists.
 4. Supported API routes use explicit TOML or per-integration env config because the source page does not state their auth requirements.
 5. Client-based integrations are registered separately and can be enabled independently.
+6. `ollamafreeapi` does not use the g4f code path and does not require `base_url` or `G4F_API_KEY`.
 
 Portainer-friendly shared g4f token:
 
@@ -166,10 +182,11 @@ At app startup:
 
 1. Browser pool initializes.
 2. `unified_registry.initialize()` loads API definitions.
-3. Enabled API integrations try to probe `/models`.
+3. Enabled OpenAI-compatible integrations probe `/models`, while `ollamafreeapi` uses `OllamaFreeAPI.list_models()`.
 4. If probing fails, fallback models are used when configured.
-5. If an upstream returns `429`, that integration enters a temporary cooldown and requests can fall back to another integration exposing the same upstream model name.
-6. One failed integration does not stop the service.
+5. `ollamafreeapi` discovery failure is recorded in diagnostics and does not stop startup.
+6. If an upstream returns `429`, that integration enters a temporary cooldown and requests can fall back to another integration exposing the same upstream model name.
+7. One failed integration does not stop the service.
 
 ## Routing
 
@@ -180,6 +197,7 @@ Routing behavior:
 1. Browser aliases resolve to canonical `browser/*` IDs.
 2. `transport=browser` goes through Playwright providers.
 3. `transport=api` goes through OpenAI-compatible or client-based API adapters.
+4. `api/ollamafreeapi/<model>` extracts the last user message and calls `OllamaFreeAPI.chat(...)`.
 
 ## `/v1/models`
 
@@ -235,6 +253,8 @@ Diagnostics include:
 - API key requirements
 - disabled reasons
 - discovered models
+- discovery refresh status and last error
+- discovered model count
 
 ## Browser Providers
 
@@ -246,6 +266,24 @@ Browser providers remain supported and now use canonical names:
 - `browser/yandex`
 - `browser/kimi`
 - `browser/deepseek`
+
+## OllamaFreeAPI Provider
+
+`ollamafreeapi` is an API/client-based provider.
+
+It is not:
+
+- a Playwright browser provider
+- a `g4f-*` integration
+- an OpenAI-compatible `base_url` adapter
+
+Canonical model examples:
+
+- `api/ollamafreeapi/llama3.3:70b`
+- `api/ollamafreeapi/deepseek-r1:7b`
+- `api/ollamafreeapi/qwen:7b-chat`
+
+The built-in `/ui` frontend reads from the same unified registry, so discovered `ollamafreeapi` models automatically appear in the API models list.
 
 DeepSeek-specific notes:
 

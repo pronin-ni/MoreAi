@@ -69,9 +69,46 @@ def render_markdown(content: str) -> str:
     return bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs)
 
 
+def get_default_selected_model() -> tuple[str, str, str, str]:
+    browser_models, api_models = model_service.group_models()
+
+    selected = next(
+        (
+            model
+            for model in api_models
+            if model.is_selectable and model.provider_id == "ollamafreeapi"
+        ),
+        None,
+    )
+    if selected is None:
+        selected = next((model for model in api_models if model.is_selectable), None)
+    if selected is None:
+        selected = next((model for model in browser_models if model.is_selectable), None)
+
+    if selected is None:
+        return "", "", "", ""
+
+    return selected.id, selected.transport, selected.provider_id, selected.display_name
+
+
+def get_model_display_name(model_id: str) -> str:
+    if not model_id:
+        return ""
+
+    browser_models, api_models = model_service.group_models()
+    for model in [*api_models, *browser_models]:
+        if model.id == model_id:
+            return model.display_name
+
+    return model_id
+
+
 @router.get("/ui", response_class=HTMLResponse)
 async def ui_index(request: Request):
     browser_models, api_models = model_service.group_models()
+    selected_model, selected_transport, provider_id, selected_display_name = (
+        get_default_selected_model()
+    )
 
     html = render_template(
         "index.html",
@@ -79,9 +116,10 @@ async def ui_index(request: Request):
             "request": request,
             "browser_models": browser_models,
             "api_models": api_models,
-            "selected_model": "",
-            "selected_transport": "",
-            "provider_id": "",
+            "selected_model": selected_model,
+            "selected_display_name": selected_display_name,
+            "selected_transport": selected_transport,
+            "provider_id": provider_id,
             "messages": [],
             "conversation_json": "[]",
             "last_response": "",
@@ -111,6 +149,7 @@ async def ui_models(request: Request, q: str = "", selected: str = ""):
             "browser_models": browser_models,
             "api_models": api_models,
             "selected_model": selected,
+            "selected_display_name": get_model_display_name(selected),
             "search_query": q,
         },
     )

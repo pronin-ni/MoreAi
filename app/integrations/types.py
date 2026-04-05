@@ -1,11 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 ApiKeyRequirement = Literal["none", "required", "unknown"]
 IntegrationType = Literal["openai_compatible", "client_based"]
 TransportType = Literal["browser", "api"]
-SourceType = Literal["browser", "g4f_openai", "g4f_client", "external_api"]
+SourceType = Literal["browser", "g4f_openai", "g4f_client", "external_api", "client_based"]
 DefinitionGroup = Literal[
     "ready_to_use_base_url",
     "supported_api_route",
@@ -27,6 +26,7 @@ class IntegrationDefinition:
     supports_models_probe: bool = True
     fallback_models: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
+    default_timeout_seconds: int | None = None
 
 
 @dataclass(slots=True)
@@ -85,3 +85,7 @@ class IntegrationStatus:
     disabled_reason: str | None
     base_url: str | None
     discovered_models: list[str] = field(default_factory=list)
+    last_refresh_status: str = "not_started"
+    last_refresh_error: str | None = None
+    last_refresh_at: float | None = None
+    models_discovered_count: int = 0

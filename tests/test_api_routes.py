@@ -36,6 +36,11 @@ class TestModelsEndpoint:
             data=[
                 Model(id="browser/qwen", created=1, owned_by="qwen"),
                 Model(id="api/g4f-auto/default", created=1, owned_by="g4f-auto"),
+                Model(
+                    id="api/ollamafreeapi/llama3.3:70b",
+                    created=1,
+                    owned_by="ollamafreeapi",
+                ),
             ],
         ),
     )
@@ -49,6 +54,7 @@ class TestModelsEndpoint:
         model_ids = [m["id"] for m in data["data"]]
         assert "browser/qwen" in model_ids
         assert "api/g4f-auto/default" in model_ids
+        assert "api/ollamafreeapi/llama3.3:70b" in model_ids
 
     @patch(
         "app.api.routes_openai.unified_registry.diagnostics",

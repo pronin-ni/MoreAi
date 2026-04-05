@@ -10,6 +10,12 @@ class TestIntegrationsConfig:
 
         assert snapshot.by_integration["g4f-groq"].enabled is True
 
+    def test_defaults_include_enabled_ollamafreeapi(self):
+        snapshot = load_integrations_config(READY_TO_USE_DEFINITIONS)
+
+        assert snapshot.by_integration["ollamafreeapi"].enabled is True
+        assert snapshot.by_integration["ollamafreeapi"].timeout_seconds == 60
+
     def test_missing_required_key_does_not_change_enabled_flag(self):
         snapshot = load_integrations_config(READY_TO_USE_DEFINITIONS)
 

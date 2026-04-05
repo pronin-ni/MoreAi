@@ -1,5 +1,5 @@
-import tomllib
 import os
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,7 +43,8 @@ def load_integrations_config(
         timeout_seconds = int(
             integration_overrides.get(
                 "timeout_seconds",
-                settings.integrations_discovery_timeout_seconds,
+                definition.default_timeout_seconds
+                or settings.integrations_discovery_timeout_seconds,
             )
         )
         retry_attempts = int(

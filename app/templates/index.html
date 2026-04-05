@@ -16,7 +16,8 @@
         <h2>Models</h2>
         <button
             class="btn-icon"
-            hx-get="/ui/models?selected={{ selected_model }}"
+            hx-get="/ui/models"
+            hx-include="#models-search-input, #models-selected-input"
             hx-target="#models-panel"
             hx-swap="outerHTML"
             title="Refresh models"
@@ -28,11 +29,14 @@
     </div>
     
     <div class="search-box">
+        <input type="hidden" id="models-selected-input" name="selected" value="{{ selected_model }}">
         <input
+            id="models-search-input"
             type="text"
             name="q"
             placeholder="Search models..."
-            hx-get="/ui/models?selected={{ selected_model }}"
+            hx-get="/ui/models"
+            hx-include="#models-selected-input"
             hx-target="#models-panel"
             hx-trigger="input changed delay:200ms"
             hx-swap="outerHTML"
@@ -41,6 +45,14 @@
         >
     </div>
 
+    {% if selected_model %}
+    <div class="current-selection-card">
+        <div class="current-selection-label">Current model</div>
+        <div class="current-selection-display">{{ selected_display_name }}</div>
+        <div class="current-selection-id">{{ selected_model }}</div>
+    </div>
+    {% endif %}
+
     {% include "partials/models_list.html" %}
 </aside>
 
@@ -48,7 +60,10 @@
     <div class="chat-header">
         <div class="chat-model-badge">
             <span class="badge badge-{{ selected_transport }}">{{ selected_transport|upper }}</span>
-            <span class="model-name">{{ selected_model }}</span>
+            <div class="selected-model-meta">
+                <span class="selected-model-display">{{ selected_display_name }}</span>
+                <span class="model-name">{{ selected_model }}</span>
+            </div>
         </div>
         <button
             class="btn-text"
@@ -90,7 +105,7 @@
         <div class="chat-input-wrapper">
             <textarea
                 name="message"
-                placeholder="Type your message..."
+                placeholder="Message {{ selected_display_name or 'the selected model' }}..."
                 rows="1"
                 {%
                 if not selected_model
@@ -102,8 +117,6 @@
                 %}autofocus{%
                 endif
                 %}
-                hx-on:input="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"
-                hx-on:keydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if(this.value.trim()) { document.getElementById('chat-form').requestSubmit(); } }"
             ></textarea>
             <button
                 type="submit"
