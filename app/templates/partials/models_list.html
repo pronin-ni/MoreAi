@@ -8,8 +8,8 @@
         </div>
         <ul>
         {% for model in browser_models %}
-            <li class="model-item {% if model.id == selected_model %}selected{% endif %} {% if not model.is_selectable %}disabled{% endif %}">
-                <label class="model-label {% if not model.is_selectable %}model-unavailable{% endif %}">
+            <li class="model-item{% if model.id == selected_model %} selected{% endif %}{% if not model.is_selectable %} disabled{% endif %}">
+                <label class="model-label{% if not model.is_selectable %} model-unavailable{% endif %}">
                     <input
                         type="radio"
                         name="model_selection"
@@ -56,8 +56,8 @@
         </div>
         <ul>
         {% for model in api_models %}
-            <li class="model-item {% if model.id == selected_model %}selected{% endif %} {% if not model.is_selectable %}disabled{% endif %}">
-                <label class="model-label {% if not model.is_selectable %}model-unavailable{% endif %}">
+            <li class="model-item{% if model.id == selected_model %} selected{% endif %}{% if not model.is_selectable %} disabled{% endif %}">
+                <label class="model-label{% if not model.is_selectable %} model-unavailable{% endif %}">
                     <input
                         type="radio"
                         name="model_selection"

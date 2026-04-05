@@ -6,7 +6,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initModelSelection() {
-    const savedModel = localStorage.getItem('selected_model');
+    const selectedInput = document.getElementById('models-selected-input');
+    const savedModel = localStorage.getItem('selected_model') || selectedInput?.value || '';
     let radio = null;
 
     if (savedModel) {
