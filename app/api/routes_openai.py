@@ -9,9 +9,10 @@ from app.schemas.openai import (
     ModelList,
 )
 from app.services.chat_proxy_service import service
-from app.utils.openai_mapper import create_completion_response, create_model_list
+from app.utils.openai_mapper import create_model_list
 from app.core.logging import get_logger, bind_request_id, clear_request_id
 from app.core.errors import APIError, BadRequestError, InternalError
+from app.registry.unified import unified_registry
 
 logger = get_logger(__name__)
 
@@ -29,6 +30,18 @@ async def list_models() -> ModelList:
     return create_model_list()
 
 
+@router.get("/diagnostics/integrations")
+async def list_integrations_diagnostics() -> dict:
+    logger.info("Listing integration diagnostics")
+    return unified_registry.diagnostics()
+
+
+@router.get("/diagnostics/models")
+async def list_models_diagnostics() -> dict:
+    logger.info("Listing model diagnostics")
+    return {"models": unified_registry.list_models()}
+
+
 @router.post(
     "/v1/chat/completions",
     response_model=ChatCompletionResponse,
@@ -43,7 +56,7 @@ async def create_chat_completion(
     body: ChatCompletionRequest,
 ) -> ChatCompletionResponse:
     request_id = bind_request_id()
-    
+
     try:
         if body.stream:
             raise BadRequestError(
@@ -58,12 +71,7 @@ async def create_chat_completion(
             message_count=len(body.messages),
         )
 
-        response_text = await service.process_completion(body, request_id)
-
-        response = create_completion_response(
-            model=body.model,
-            content=response_text,
-        )
+        response = await service.process_completion(body, request_id)
 
         logger.info(
             "Chat completion response sent",

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.browser.auth import GoogleAuthBootstrapper
+from app.browser.auth import AuthBootstrapper, GoogleAuthBootstrapper
 from app.core.config import settings
 from app.core.errors import BrowserError
 
@@ -49,3 +49,29 @@ class TestGoogleAuthBootstrapper:
             object.__setattr__(settings.google_auth, "credentials_path", original_path)
 
         assert "google" in str(exc_info.value).lower()
+
+
+class TestProviderCredentialsBootstrapper:
+    def test_load_provider_credentials_success(self, tmp_path):
+        bootstrapper = AuthBootstrapper()
+        credentials = bootstrapper._load_provider_credentials(
+            "deepseek",
+            {"login": "user@example.com", "password": "secret-password"},
+        )
+
+        assert credentials.email == "user@example.com"
+        assert credentials.password == "secret-password"
+
+    def test_load_provider_credentials_requires_values(self):
+        bootstrapper = AuthBootstrapper()
+
+        with pytest.raises(BrowserError) as exc_info:
+            bootstrapper._load_provider_credentials(
+                "deepseek",
+                {"login": "", "password": ""},
+            )
+
+        assert (
+            "not configured" in str(exc_info.value).lower()
+            or "must not be empty" in str(exc_info.value).lower()
+        )

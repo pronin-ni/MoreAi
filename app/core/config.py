@@ -8,7 +8,7 @@ class BrowserSettings(BaseSettings):
 
     message_input: str = Field(default='textarea[placeholder*="Чем"]')
     send_button: str = Field(default='button:has(img[src*="send"])')
-    assistant_message: str = Field(default='main p:last-of-type')
+    assistant_message: str = Field(default="main p:last-of-type")
     generation_indicator: str = Field(default='img[src*="thinking"], img[src*="loading"]')
     new_chat: str = Field(default='a[href="/"], button:has-text("?")')
 
@@ -54,6 +54,16 @@ class KimiSettings(BaseSettings):
     skip_auth_url: str = Field(default="https://www.kimi.com/?skip_auth=1")
 
 
+class DeepseekSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="DEEPSEEK_", extra="ignore")
+
+    url: str = Field(default="https://chat.deepseek.com/sign_in")
+    headless: bool = Field(default=True)
+    storage_state_path: Optional[str] = Field(default="./secrets/deepseek.storage_state.json")
+    login: Optional[str] = Field(default=None)
+    password: Optional[str] = Field(default=None)
+
+
 class GoogleAuthSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GOOGLE_AUTH_", extra="ignore")
 
@@ -74,6 +84,14 @@ class Settings(BaseSettings):
     response_timeout_seconds: int = Field(default=120, ge=1)
     retry_attempts: int = Field(default=1, ge=0)
     browser_slowmo: int = Field(default=0, ge=0)
+    integrations_enabled: bool = Field(default=True)
+    integrations_auto_discover_models: bool = Field(default=True)
+    integrations_discovery_timeout_seconds: int = Field(default=10, ge=1)
+    integrations_retry_attempts: int = Field(default=1, ge=0)
+    integrations_allow_fallback_models: bool = Field(default=True)
+    integrations_config_path: str = Field(default="./config/integrations.toml")
+    integrations_rate_limit_cooldown_seconds: int = Field(default=60, ge=1)
+    g4f_api_key: Optional[str] = Field(default=None)
 
     artifacts_dir: str = Field(default="./artifacts")
 
@@ -87,6 +105,7 @@ class Settings(BaseSettings):
     chatgpt: ChatGPTSettings = Field(default_factory=ChatGPTSettings)
     yandex: YandexSettings = Field(default_factory=YandexSettings)
     kimi: KimiSettings = Field(default_factory=KimiSettings)
+    deepseek: DeepseekSettings = Field(default_factory=DeepseekSettings)
     google_auth: GoogleAuthSettings = Field(default_factory=GoogleAuthSettings)
 
     def __init__(self, **kwargs):
@@ -103,6 +122,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "yandex", YandexSettings())
         if "kimi" not in kwargs:
             object.__setattr__(self, "kimi", KimiSettings())
+        if "deepseek" not in kwargs:
+            object.__setattr__(self, "deepseek", DeepseekSettings())
         if "google_auth" not in kwargs:
             object.__setattr__(self, "google_auth", GoogleAuthSettings())
 

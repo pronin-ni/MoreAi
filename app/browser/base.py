@@ -67,6 +67,12 @@ class BrowserProvider(ABC):
         """Wait until the provider is ready after auth completes."""
         return None
 
+    async def authenticate_with_credentials(self, credentials: dict[str, str]) -> None:
+        """Perform provider-specific auth using credentials from a mounted config file."""
+        raise NotImplementedError(
+            f"{self.provider_id} does not support credential-file auth bootstrap"
+        )
+
     @classmethod
     def recon_hints(cls) -> dict[str, list[str] | str | bool | None]:
         """Provider-specific recon hints used by the recon utility."""

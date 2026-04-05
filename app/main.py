@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+
+import app.browser.providers  # noqa: F401
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,6 +10,7 @@ from app.browser.session_pool import pool
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.errors import APIError
+from app.registry.unified import unified_registry
 
 configure_logging(settings.log_level)
 logger = get_logger(__name__)
@@ -16,12 +19,15 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting MoreAI Proxy service", version="0.1.0")
-    
+
     await pool.initialize()
     logger.info("Browser pool initialized")
-    
+
+    await unified_registry.initialize()
+    logger.info("Unified registry initialized")
+
     yield
-    
+
     logger.info("Shutting down MoreAI Proxy service")
     await pool.shutdown()
     logger.info("Browser pool shutdown complete")

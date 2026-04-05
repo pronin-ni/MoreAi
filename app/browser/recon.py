@@ -23,6 +23,7 @@ class UIRecon:
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.provider_class = registry.get_provider_class(model)
         self.provider_config = registry.get_provider_config(model)
+        self.provider = None
 
     async def initialize(self) -> None:
         self.playwright = await async_playwright().start()
@@ -44,29 +45,32 @@ class UIRecon:
         logger.info("Browser closed", model=self.model)
 
     async def discover(self) -> dict:
-        provider = self.provider_class(self.page, provider_config=self.provider_config)
-        logger.info("Starting provider recon", model=self.model, provider_id=provider.provider_id)
+        self.provider = self.provider_class(self.page, provider_config=self.provider_config)
+        logger.info(
+            "Starting provider recon", model=self.model, provider_id=self.provider.provider_id
+        )
 
-        await provider.navigate_to_chat()
+        await self.provider.navigate_to_chat()
         await self._capture_screenshot("01_initial_load")
 
-        self.findings.update(provider.recon_hints())
+        self.findings.update(self.provider.recon_hints())
         self.findings["resolved_url"] = self.page.url
         self.findings["title"] = await self.page.title()
-        self.findings["login_required"] = await provider.detect_login_required()
-        self.findings["new_chat_url"] = f"{provider.target_url.rstrip('/')}/?chat_enter_method=new_chat"
-        self.findings["visible_text_preview"] = await self._safe_inner_text(self.page.locator("body").first)
+        self.findings["login_required"] = await self.provider.detect_login_required()
+        self.findings["visible_text_preview"] = await self._safe_inner_text(
+            self.page.locator("body").first
+        )
 
         await self._save_html("01_initial_load")
 
         try:
-            await provider.start_new_chat()
+            await self.provider.start_new_chat()
             self.findings["start_new_chat"] = "success"
             await self._capture_screenshot("02_after_new_chat")
         except Exception as exc:
             self.findings["start_new_chat"] = f"error: {exc}"
 
-        self.findings["login_required_after_reset"] = await provider.detect_login_required()
+        self.findings["login_required_after_reset"] = await self.provider.detect_login_required()
         self.findings["dom_snapshot"] = await self._collect_dom_snapshot()
         await self._save_findings()
         return self.findings
@@ -77,16 +81,18 @@ class UIRecon:
             "button_count": await self.page.get_by_role("button").count(),
             "link_count": await self.page.get_by_role("link").count(),
         }
-        key_locators = {
-            "new_chat": self.page.get_by_role("link", name="New Chat").first,
-            "continue_with_google": self.page.get_by_text("Continue with Google", exact=False).first,
-            "phone_number": self.page.get_by_role("textbox", name="Phone number").first,
-            "send_button_container": self.page.locator(".send-button-container").first,
-            "chat_input_editor": self.page.locator(".chat-input-editor").first,
-        }
-        for key, locator in key_locators.items():
+        hints = self.provider.recon_hints() if self.provider is not None else {}
+        for key in ("new_chat", "input", "send", "assistant_response", "login_wall"):
+            selectors = hints.get(key)
+            if not isinstance(selectors, list):
+                continue
             try:
-                snapshot[key] = await locator.is_visible(timeout=500)
+                snapshot[key] = False
+                for selector in selectors:
+                    locator = self.page.locator(selector).first
+                    if await locator.is_visible(timeout=500):
+                        snapshot[key] = True
+                        break
             except Exception:
                 snapshot[key] = False
         return snapshot

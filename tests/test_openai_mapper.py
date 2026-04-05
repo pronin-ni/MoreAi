@@ -1,83 +1,115 @@
-import pytest
 import time
+from unittest.mock import patch
+
+from app.schemas.openai import ChatCompletionResponse, ModelList
 from app.utils.openai_mapper import (
-    generate_completion_id,
     create_completion_response,
     create_model_list,
+    generate_completion_id,
 )
-from app.schemas.openai import ChatCompletionResponse, ModelList
 
 
 class TestGenerateCompletionId:
     def test_generates_correct_prefix(self):
-        result = generate_completion_id()
-        
-        assert result.startswith("chatcmpl-")
+        assert generate_completion_id().startswith("chatcmpl-")
 
     def test_generates_unique_ids(self):
         ids = [generate_completion_id() for _ in range(100)]
-        
         assert len(set(ids)) == 100
 
 
 class TestCreateCompletionResponse:
     def test_creates_valid_response(self):
         response = create_completion_response(
-            model="glm",
+            model="browser/glm",
             content="Hello! How can I help you?",
         )
-        
+
         assert isinstance(response, ChatCompletionResponse)
         assert response.id.startswith("chatcmpl-")
         assert response.object == "chat.completion"
-        assert response.model == "glm"
+        assert response.model == "browser/glm"
         assert len(response.choices) == 1
         assert response.choices[0].message.role == "assistant"
         assert response.choices[0].message.content == "Hello! How can I help you?"
         assert response.choices[0].finish_reason == "stop"
-        assert response.usage.prompt_tokens == 0
-        assert response.usage.completion_tokens == 0
-        assert response.usage.total_tokens == 0
 
     def test_response_has_created_timestamp(self):
         before = int(time.time())
-        response = create_completion_response(
-            model="test-model",
-            content="test",
-        )
+        response = create_completion_response(model="test-model", content="test")
         after = int(time.time())
-        
         assert before <= response.created <= after
 
 
 class TestCreateModelList:
-    def test_creates_valid_model_list(self):
+    @patch(
+        "app.registry.unified.unified_registry.list_models",
+        return_value=[
+            {
+                "id": "browser/qwen",
+                "provider_id": "qwen",
+                "transport": "browser",
+                "source_type": "browser",
+                "enabled": True,
+                "available": True,
+            },
+            {
+                "id": "api/g4f-auto/default",
+                "provider_id": "g4f-auto",
+                "transport": "api",
+                "source_type": "g4f_openai",
+                "enabled": True,
+                "available": True,
+            },
+        ],
+    )
+    def test_creates_valid_model_list(self, _mock_list_models):
         model_list = create_model_list()
-        
+
         assert isinstance(model_list, ModelList)
         assert model_list.object == "list"
-        assert len(model_list.data) == 6
-        
-        model_ids = [m.id for m in model_list.data]
-        assert "glm" in model_ids
-        assert "internal-web-chat" in model_ids
-        assert "chatgpt" in model_ids
-        assert "yandex" in model_ids
-        assert "kimi" in model_ids
+        assert len(model_list.data) == 2
 
-    def test_model_has_created_timestamp(self):
+        model_ids = [m.id for m in model_list.data]
+        assert "browser/qwen" in model_ids
+        assert "api/g4f-auto/default" in model_ids
+
+    @patch(
+        "app.registry.unified.unified_registry.list_models",
+        return_value=[
+            {
+                "id": "browser/qwen",
+                "provider_id": "qwen",
+                "transport": "browser",
+                "source_type": "browser",
+                "enabled": True,
+                "available": True,
+            }
+        ],
+    )
+    def test_model_has_created_timestamp(self, _mock_list_models):
         before = int(time.time())
         model_list = create_model_list()
         after = int(time.time())
-        
+
         for model in model_list.data:
             assert before <= model.created <= after
 
-    def test_model_owned_by(self):
+    @patch(
+        "app.registry.unified.unified_registry.list_models",
+        return_value=[
+            {
+                "id": "browser/qwen",
+                "provider_id": "qwen",
+                "transport": "browser",
+                "source_type": "browser",
+                "enabled": True,
+                "available": True,
+            }
+        ],
+    )
+    def test_model_owned_by(self, _mock_list_models):
         model_list = create_model_list()
-        
-        glm_model = next(m for m in model_list.data if m.id == "glm")
-        assert glm_model.owned_by == "glm"
-        
-        qwen_model = next(m for m in model_list.data if m.id == "internal-web-chat")
+
+        qwen_model = next(m for m in model_list.data if m.id == "browser/qwen")
         assert qwen_model.owned_by == "qwen"

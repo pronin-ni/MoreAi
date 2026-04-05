@@ -42,10 +42,10 @@ def create_completion_response(
 
 
 def create_model_list() -> ModelList:
-    from app.browser.registry import registry
-    
-    models = registry.list_models()
-    
+    from app.registry.unified import unified_registry
+
+    models = unified_registry.list_models()
+
     return ModelList(
         object="list",
         data=[
@@ -54,6 +54,11 @@ def create_model_list() -> ModelList:
                 object="model",
                 created=int(time.time()),
                 owned_by=m["provider_id"],
+                provider_id=m["provider_id"],
+                transport=m["transport"],
+                source_type=m["source_type"],
+                enabled=m.get("enabled", True),
+                available=m.get("available", True),
             )
             for m in models
         ],

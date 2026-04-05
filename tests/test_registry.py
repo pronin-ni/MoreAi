@@ -1,11 +1,13 @@
 import pytest
-from app.browser.registry import ProviderRegistry
+
 from app.browser.base import BrowserProvider
-from app.browser.providers.glm import GlmProvider
-from app.browser.providers.qwen import QwenProvider
 from app.browser.providers.chatgpt import ChatGPTProvider
-from app.browser.providers.yandex import YandexProvider
+from app.browser.providers.deepseek import DeepseekProvider
+from app.browser.providers.glm import GlmProvider
 from app.browser.providers.kimi import KimiProvider
+from app.browser.providers.qwen import QwenProvider
+from app.browser.providers.yandex import YandexProvider
+from app.browser.registry import ProviderRegistry
 
 
 class DummyProvider(BrowserProvider):
@@ -33,68 +35,92 @@ class DummyProvider(BrowserProvider):
 class TestProviderRegistry:
     def test_register_provider(self):
         reg = ProviderRegistry()
-        reg.register(DummyProvider, model_ids=["dummy-model"], config={"url": "http://test"})
+        reg.register(
+            DummyProvider,
+            canonical_model_id="browser/dummy",
+            alias_ids=["dummy-model"],
+            config={"url": "http://test"},
+        )
 
         assert "dummy" in reg._providers
-        assert reg._model_to_provider["dummy-model"] == "dummy"
+        assert reg.resolve_model("dummy-model") == "browser/dummy"
 
-    def test_register_multiple_models(self):
+    def test_register_multiple_aliases(self):
         reg = ProviderRegistry()
-        reg.register(DummyProvider, model_ids=["dm1", "dm2", "dm3"])
+        reg.register(
+            DummyProvider,
+            canonical_model_id="browser/dummy",
+            alias_ids=["dm1", "dm2", "dm3"],
+        )
 
-        assert reg._model_to_provider["dm1"] == "dummy"
-        assert reg._model_to_provider["dm2"] == "dummy"
-        assert reg._model_to_provider["dm3"] == "dummy"
+        assert reg.resolve_model("dm1") == "browser/dummy"
+        assert reg.resolve_model("dm2") == "browser/dummy"
+        assert reg.resolve_model("dm3") == "browser/dummy"
 
     def test_get_provider_class(self):
-        from app.browser.providers import GlmProvider, QwenProvider, ChatGPTProvider
-
         reg = ProviderRegistry()
-        reg.register(GlmProvider, model_ids=["glm"])
-        reg.register(QwenProvider, model_ids=["qwen", "internal-web-chat"])
-        reg.register(ChatGPTProvider, model_ids=["chatgpt"])
+        reg.register(GlmProvider, canonical_model_id="browser/glm", alias_ids=["glm"])
+        reg.register(
+            QwenProvider,
+            canonical_model_id="browser/qwen",
+            alias_ids=["qwen", "internal-web-chat"],
+        )
+        reg.register(
+            ChatGPTProvider,
+            canonical_model_id="browser/chatgpt",
+            alias_ids=["chatgpt"],
+        )
 
-        glm_cls = reg.get_provider_class("glm")
-        assert glm_cls == GlmProvider
-
-        qwen_cls = reg.get_provider_class("qwen")
-        assert qwen_cls == QwenProvider
-
-        qwen_cls2 = reg.get_provider_class("internal-web-chat")
-        assert qwen_cls2 == QwenProvider
+        assert reg.get_provider_class("glm") == GlmProvider
+        assert reg.get_provider_class("browser/qwen") == QwenProvider
+        assert reg.get_provider_class("internal-web-chat") == QwenProvider
 
     def test_get_unknown_model_raises(self):
         from app.core.errors import BadRequestError
 
         reg = ProviderRegistry()
-        reg.register(GlmProvider, model_ids=["glm"])
+        reg.register(GlmProvider, canonical_model_id="browser/glm", alias_ids=["glm"])
 
         with pytest.raises(BadRequestError) as exc_info:
             reg.get_provider_class("unknown-model")
 
         assert "Unknown model" in exc_info.value.detail["message"]
 
-    def test_list_models(self):
+    def test_list_models_returns_only_canonical_ids(self):
         reg = ProviderRegistry()
-        reg.register(GlmProvider, model_ids=["glm"])
-        reg.register(QwenProvider, model_ids=["qwen", "internal-web-chat"])
-        reg.register(KimiProvider, model_ids=["kimi"])
+        reg.register(GlmProvider, canonical_model_id="browser/glm", alias_ids=["glm"])
+        reg.register(
+            QwenProvider,
+            canonical_model_id="browser/qwen",
+            alias_ids=["qwen", "internal-web-chat"],
+        )
+        reg.register(KimiProvider, canonical_model_id="browser/kimi", alias_ids=["kimi"])
+        reg.register(
+            DeepseekProvider,
+            canonical_model_id="browser/deepseek",
+            alias_ids=["deepseek"],
+        )
 
         models = reg.list_models()
 
         assert len(models) == 4
         model_ids = [m["id"] for m in models]
-        assert "glm" in model_ids
-        assert "qwen" in model_ids
-        assert "internal-web-chat" in model_ids
-        assert "kimi" in model_ids
+        assert "browser/glm" in model_ids
+        assert "browser/qwen" in model_ids
+        assert "browser/kimi" in model_ids
+        assert "browser/deepseek" in model_ids
+        assert "glm" not in model_ids
 
     def test_get_provider_config(self):
         reg = ProviderRegistry()
-        reg.register(GlmProvider, model_ids=["glm"], config={"url": "https://chat.z.ai/"})
+        reg.register(
+            GlmProvider,
+            canonical_model_id="browser/glm",
+            alias_ids=["glm"],
+            config={"url": "https://chat.z.ai/"},
+        )
 
-        config = reg.get_provider_config("glm")
-        assert config["url"] == "https://chat.z.ai/"
+        assert reg.get_provider_config("glm")["url"] == "https://chat.z.ai/"
 
 
 class TestProviderClasses:
@@ -130,25 +156,10 @@ class TestProviderClasses:
         assert KimiProvider.requires_auth is True
         assert KimiProvider.auth_provider == "google"
 
-    def test_yandex_routing(self):
-        from app.browser.providers import YandexProvider
-
-        reg = ProviderRegistry()
-        reg.register(YandexProvider, model_ids=["yandex"])
-
-        provider_cls = reg.get_provider_class("yandex")
-        assert provider_cls == YandexProvider
-
-        models = reg.list_models()
-        model_ids = [m["id"] for m in models]
-        assert "yandex" in model_ids
-
-    def test_kimi_routing(self):
-        reg = ProviderRegistry()
-        reg.register(KimiProvider, model_ids=["kimi"], config={"url": "https://www.kimi.com/"})
-
-        provider_cls = reg.get_provider_class("kimi")
-        assert provider_cls == KimiProvider
-
-        config = reg.get_provider_config("kimi")
-        assert config["url"] == "https://www.kimi.com/"
+    def test_deepseek_provider_attrs(self):
+        assert DeepseekProvider.provider_id == "deepseek"
+        assert DeepseekProvider.model_name == "deepseek"
+        assert DeepseekProvider.display_name == "Deepseek"
+        assert DeepseekProvider.target_url == "https://chat.deepseek.com/sign_in"
+        assert DeepseekProvider.requires_auth is True
+        assert DeepseekProvider.auth_provider == "credentials"

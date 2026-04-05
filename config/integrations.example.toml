@@ -1,0 +1,87 @@
+[integrations.g4f_localhost]
+enabled = true
+base_url = "https://localhost:1337/v1"
+fallback_models = ["default"]
+
+[integrations.g4f_groq]
+enabled = true
+
+[integrations.g4f_ollama]
+enabled = true
+
+[integrations.g4f_pollinations]
+enabled = true
+
+[integrations.g4f_nvidia]
+enabled = true
+
+[integrations.g4f_gemini]
+enabled = true
+
+[integrations.g4f_hosted]
+enabled = false
+api_key = ""
+
+[integrations.g4f_auto]
+enabled = true
+fallback_models = ["default"]
+
+[integrations.openrouter]
+enabled = false
+api_key = ""
+
+[integrations.openai]
+enabled = false
+api_key = ""
+
+[integrations.gemini_openai]
+enabled = false
+api_key = ""
+
+[integrations.deepinfra]
+enabled = false
+api_key = ""
+
+[integrations.xai]
+enabled = false
+api_key = ""
+
+[integrations.together]
+enabled = false
+api_key = ""
+
+[integrations.typegpt]
+enabled = false
+api_key = ""
+
+[integrations.grok]
+enabled = false
+api_key = ""
+
+[integrations.apiairforce]
+enabled = false
+api_key = ""
+
+[integrations.g4f_client_pollinations]
+enabled = true
+base_url = "https://g4f.space/api/pollinations"
+
+[integrations.g4f_client_ollama]
+enabled = true
+base_url = "https://g4f.space/api/ollama"
+
+[integrations.g4f_client_gemini]
+enabled = true
+base_url = "https://g4f.space/api/gemini"
+
+[integrations.g4f_client_puter]
+enabled = false
+
+[integrations.g4f_client_huggingface]
+enabled = false
+
+[integrations.g4f_client_openai_chat]
+enabled = false
+
+[integrations.g4f_client_perplexity]
+enabled = false

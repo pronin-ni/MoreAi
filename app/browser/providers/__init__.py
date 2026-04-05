@@ -3,12 +3,14 @@ from app.browser.providers.qwen import QwenProvider
 from app.browser.providers.chatgpt import ChatGPTProvider
 from app.browser.providers.yandex import YandexProvider
 from app.browser.providers.kimi import KimiProvider
+from app.browser.providers.deepseek import DeepseekProvider
 from app.browser.registry import registry
 from app.core.config import settings
 
 registry.register(
     QwenProvider,
-    model_ids=["internal-web-chat", "qwen"],
+    canonical_model_id="browser/qwen",
+    alias_ids=["internal-web-chat", "qwen"],
     config={
         "url": settings.qwen.url,
         "storage_state_path": settings.qwen.storage_state_path,
@@ -17,7 +19,8 @@ registry.register(
 
 registry.register(
     GlmProvider,
-    model_ids=["glm"],
+    canonical_model_id="browser/glm",
+    alias_ids=["glm"],
     config={
         "url": settings.glm.url,
         "storage_state_path": settings.glm.storage_state_path,
@@ -26,7 +29,8 @@ registry.register(
 
 registry.register(
     ChatGPTProvider,
-    model_ids=["chatgpt"],
+    canonical_model_id="browser/chatgpt",
+    alias_ids=["chatgpt"],
     config={
         "url": settings.chatgpt.url,
         "storage_state_path": settings.chatgpt.storage_state_path,
@@ -35,7 +39,8 @@ registry.register(
 
 registry.register(
     YandexProvider,
-    model_ids=["yandex"],
+    canonical_model_id="browser/yandex",
+    alias_ids=["yandex"],
     config={
         "url": settings.yandex.url,
         "storage_state_path": settings.yandex.storage_state_path,
@@ -44,7 +49,8 @@ registry.register(
 
 registry.register(
     KimiProvider,
-    model_ids=["kimi"],
+    canonical_model_id="browser/kimi",
+    alias_ids=["kimi"],
     config={
         "url": settings.kimi.url,
         "skip_auth_url": settings.kimi.skip_auth_url,
@@ -53,4 +59,24 @@ registry.register(
     },
 )
 
-__all__ = ["GlmProvider", "QwenProvider", "ChatGPTProvider", "YandexProvider", "KimiProvider"]
+registry.register(
+    DeepseekProvider,
+    canonical_model_id="browser/deepseek",
+    alias_ids=["deepseek"],
+    config={
+        "url": settings.deepseek.url,
+        "storage_state_path": settings.deepseek.storage_state_path,
+        "login": settings.deepseek.login,
+        "password": settings.deepseek.password,
+        "auth_provider": "credentials",
+    },
+)
+
+__all__ = [
+    "GlmProvider",
+    "QwenProvider",
+    "ChatGPTProvider",
+    "YandexProvider",
+    "KimiProvider",
+    "DeepseekProvider",
+]

@@ -1,388 +1,288 @@
-# MoreAI Proxy - OpenAI-Compatible API Proxy with Browser Automation
+# MoreAI Proxy
 
-## Overview
+OpenAI-compatible FastAPI proxy with two execution transports behind one unified model namespace:
 
-Production-oriented backend service that works as an OpenAI-compatible API proxy for multiple browser-based AI chat providers. Uses browser automation (Playwright) to interact with various chat interfaces.
+1. `browser/*` for Playwright/browser providers
+2. `api/*` for OpenAI-compatible upstream APIs and g4f integrations
 
-## Supported Providers
+## Namespace
 
-| Model | Provider | URL | Description |
-|-------|----------|-----|-------------|
-| `internal-web-chat` | Qwen | https://chat.qwen.ai/ | Qwen Chat (default) |
-| `glm` | GLM | https://chat.z.ai/ | Z.ai GLM Chat |
-| `chatgpt` | ChatGPT | https://chatgpt.com/ | OpenAI ChatGPT |
-| `yandex` | Alice-Yandex | https://alice.yandex.ru/ | Yandex Alice |
-| `kimi` | Kimi | https://www.kimi.com/ | Moonshot Kimi via Google-authenticated browser session |
+Canonical browser models:
+
+- `browser/qwen`
+- `browser/glm`
+- `browser/chatgpt`
+- `browser/yandex`
+- `browser/kimi`
+- `browser/deepseek`
+
+Backward-compatible aliases still work:
+
+- `qwen -> browser/qwen`
+- `internal-web-chat -> browser/qwen`
+- `glm -> browser/glm`
+- `chatgpt -> browser/chatgpt`
+- `yandex -> browser/yandex`
+- `kimi -> browser/kimi`
+- `deepseek -> browser/deepseek`
+
+Canonical API models use:
+
+- `api/<integration>/<model>`
+
+Examples:
+
+- `api/g4f-groq/llama-3.3-70b`
+- `api/g4f-auto/default`
+- `api/openrouter/gpt-4o-mini`
 
 ## Architecture
 
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│   Client    │────▶│  FastAPI     │────▶│  Chat Proxy     │
-│ (OpenAI SDK)│     │  Endpoints   │     │  Service        │
-└─────────────┘     └──────────────┘     └────────┬────────┘
-                                                  │
-                    ┌──────────────┐     ┌────────▼────────┐
-                    │  /v1/models  │     │  Session Pool  │
-                    │  /health     │     │  (Browser Pages)│
-                    └──────────────┘     └────────┬────────┘
-                                                  │
-                                           ┌──────▼──────┐
-                                           │ Provider   │
-                                           │ Registry   │
-                                           └──────┬──────┘
-                                                  │
-                    ┌──────────────┬──────────────┼──────────────┐
-                    │              │              │              │
-              ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐
-              │  Qwen UI  │ │  GLM UI   │ │ChatGPT UI│ │   ...    │
-              └───────────┘ └───────────┘ └───────────┘ └───────────┘
-```
+The routing stack is split into three layers:
 
-## Features
+1. `browser_registry`
+Browser-only Playwright providers.
 
-- **Multi-Provider Support**: Qwen, GLM, ChatGPT, Yandex, Kimi via unified API
-- **OpenAI-Compatible API**: `/v1/chat/completions`, `/v1/models`, `/health`
-- **Browser Automation**: Uses Playwright to interact with various chat interfaces
-- **Session Pooling**: Concurrent request handling with exclusive browser sessions
-- **Reusable Google Auth Bootstrap**: Shared credentials file plus provider-specific storage state for Google-authenticated providers like Kimi
-- **Structured Logging**: JSON logs with request-id correlation
-- **Error Handling**: Detailed error messages with screenshot/HTML artifacts
+2. `api_registry`
+OpenAI-compatible and client-based integrations discovered from `g4f.dev/docs/ready_to_use.html`.
 
-## Quick Start
+3. `unified_registry`
+Facade that aggregates browser and API models, resolves aliases, and returns execution strategy.
 
-### 1. Install Dependencies
+Core abstractions:
 
-```bash
-# Using uv (recommended)
-uv sync
-playwright install chromium
+- `IntegrationDefinition`
+- `OpenAICompatibleIntegration`
+- `ClientBasedIntegration`
+- `ProviderRegistry`
+- `APIRegistry`
+- `UnifiedRegistry`
 
-# Or using pip
-pip install -e ".[dev]"
-playwright install chromium
-```
+## Ready-To-Use Integrations Parsed From Source
 
-### 2. Configure Environment
+Source of truth: `https://g4f.dev/docs/ready_to_use.html`
 
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
+### Base URLs Table
 
-### 3. Run the Service
+| Integration | Base URL | API key | Notes |
+|-------------|----------|---------|-------|
+| `g4f-localhost` | `https://localhost:1337/v1` | none required | use it locally |
+| `g4f-groq` | `https://g4f.space/api/groq` | none required | Use Groq provider |
+| `g4f-ollama` | `https://g4f.space/api/ollama` | none required | Use Ollama provider |
+| `g4f-pollinations` | `https://g4f.space/api/pollinations` | none required | Proxy for pollinations.ai |
+| `g4f-nvidia` | `https://g4f.space/api/nvidia` | none required | Use Nvidia provider |
+| `g4f-gemini` | `https://g4f.space/api/gemini` | none required | Hosted Gemini provider |
+| `g4f-hosted` | `https://g4f.space/v1` | required | Hosted instance, many models |
 
-```bash
-# Development
-uvicorn app.main:app --reload --port 8000
+### Also Supported API Routes
 
-# Production
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
+- `nvidia-api` → `https://integrate.api.nvidia.com/v1`
+- `deepinfra` → `https://api.deepinfra.com/v1`
+- `openrouter` → `https://openrouter.ai/api/v1`
+- `gemini-openai` → `https://generativelanguage.googleapis.com/v1beta/openai`
+- `xai` → `https://api.x.ai/v1`
+- `together` → `https://api.together.xyz/v1`
+- `openai` → `https://api.openai.com/v1`
+- `typegpt` → `https://typegpt.ai/api`
+- `grok` → `https://api.grok.com/v1`
+- `apiairforce` → `https://api.airforce/v1`
+- `g4f-auto` → `https://g4f.space/api/auto`
 
-### 4. Test
+### Individual Clients
 
-```bash
-# Health check
-curl http://localhost:8000/health
+- `g4f-client-pollinations`
+- `g4f-client-puter`
+- `g4f-client-huggingface`
+- `g4f-client-ollama`
+- `g4f-client-gemini`
+- `g4f-client-openai-chat`
+- `g4f-client-perplexity`
 
-# List models
-curl http://localhost:8000/v1/models
-
-# Chat completion with Qwen (default)
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "internal-web-chat",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-
-# Chat completion with ChatGPT
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "chatgpt",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-
-# Chat completion with GLM
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "glm",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-
-# Chat completion with Kimi
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "kimi",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
+Client-based integrations are represented separately from OpenAI-compatible upstreams, even when a client can reuse the same HTTP adapter internally.
 
 ## Configuration
 
-See `.env.example` for all configuration options.
+Base runtime config lives in `.env`.
 
-### Key Settings
+Important env variables:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `INTERNAL_CHAT_URL` | Base URL of Qwen Chat | `https://chat.qwen.ai/` |
-| `HEADLESS` | Run browser in headless mode | `true` |
-| `BROWSER_POOL_SIZE` | Max concurrent browser sessions | `5` |
-| `RESPONSE_TIMEOUT_SECONDS` | Max wait for response | `120` |
-| `ARTIFACTS_DIR` | Directory for debug artifacts | `./artifacts` |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `INTEGRATIONS_ENABLED` | Global switch for API integrations | `true` |
+| `INTEGRATIONS_AUTO_DISCOVER_MODELS` | Probe `/models` at startup | `true` |
+| `INTEGRATIONS_DISCOVERY_TIMEOUT_SECONDS` | Discovery timeout | `10` |
+| `INTEGRATIONS_RETRY_ATTEMPTS` | Retry count for API requests | `1` |
+| `INTEGRATIONS_ALLOW_FALLBACK_MODELS` | Allow fallback model IDs when `/models` fails | `true` |
+| `INTEGRATIONS_CONFIG_PATH` | TOML overrides for per-integration config | `./config/integrations.toml` |
+| `INTEGRATIONS_RATE_LIMIT_COOLDOWN_SECONDS` | Cooldown after upstream `429` | `60` |
+| `G4F_API_KEY` | Shared token for all `g4f-*` integrations | unset |
 
-### Provider-Specific Settings
+Per-integration overrides live in TOML.
 
-| Provider | Env Prefix | Key Settings |
-|----------|-----------|--------------|
-| Qwen | `QWEN_` | `QWEN_URL` |
-| GLM | `GLM_` | `GLM_URL` |
-| ChatGPT | `CHATGPT_` | `CHATGPT_URL` |
-| Yandex | `YANDEX_` | `YANDEX_URL` |
-| Kimi | `KIMI_` | `KIMI_URL`, `KIMI_STORAGE_STATE_PATH`, `KIMI_SKIP_AUTH_URL` |
+Example file: `config/integrations.example.toml`
 
-### Shared Google Auth
+Example sections:
 
-Google-authenticated providers use a shared credentials file plus provider-specific browser storage state:
+```toml
+[integrations.g4f_groq]
+enabled = true
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GOOGLE_AUTH_CREDENTIALS_PATH` | JSON file with shared Google credentials | `./secrets/browser_auth.json` |
-| `GOOGLE_AUTH_AUTO_BOOTSTRAP` | Auto-run Google bootstrap when storage state is missing | `true` |
-| `GOOGLE_AUTH_TIMEOUT_SECONDS` | Timeout for Google login steps | `180` |
-| `KIMI_STORAGE_STATE_PATH` | Storage state file saved after successful Google login for Kimi | `./secrets/kimi.storage_state.json` |
+[integrations.g4f_hosted]
+enabled = false
+api_key = ""
 
-Credentials file format:
+[integrations.openrouter]
+enabled = false
+api_key = ""
 
-```json
-{
-  "google": {
-    "email": "your-google-login@example.com",
-    "password": "your-google-password",
-    "recovery_email": "optional-recovery@example.com"
-  }
-}
+[integrations.g4f_auto]
+enabled = true
+fallback_models = ["default"]
 ```
 
-Bootstrap manually when needed:
+Behavior rules:
 
-```bash
-python scripts/bootstrap_google_auth.py --model kimi
+1. Base-table integrations marked `none required` auto-enable by default.
+2. `g4f-hosted` is disabled by default until configured.
+3. `G4F_API_KEY` is applied automatically to every `g4f-*` integration unless a more specific `INTEGRATION_<ID>_API_KEY` env override exists.
+4. Supported API routes use explicit TOML or per-integration env config because the source page does not state their auth requirements.
+5. Client-based integrations are registered separately and can be enabled independently.
+
+Portainer-friendly shared g4f token:
+
+```env
+G4F_API_KEY=your_shared_g4f_token
 ```
+
+Optional per-integration override example:
+
+```env
+INTEGRATION_G4F_HOSTED_API_KEY=your_override_token
+```
+
+## Startup Discovery
+
+At app startup:
+
+1. Browser pool initializes.
+2. `unified_registry.initialize()` loads API definitions.
+3. Enabled API integrations try to probe `/models`.
+4. If probing fails, fallback models are used when configured.
+5. If an upstream returns `429`, that integration enters a temporary cooldown and requests can fall back to another integration exposing the same upstream model name.
+6. One failed integration does not stop the service.
 
 ## Routing
 
-The provider is selected based on the `model` field in the request:
+`/v1/chat/completions` uses `unified_registry.resolve_model(model)`.
 
-```
-model="chatgpt"   → ChatGPTProvider → https://chatgpt.com/
-model="glm"       → GlmProvider     → https://chat.z.ai/
-model="kimi"      → KimiProvider    → https://www.kimi.com/
-model="qwen"      → QwenProvider    → https://chat.qwen.ai/
-model="internal-web-chat" → QwenProvider → https://chat.qwen.ai/
-```
+Routing behavior:
 
-## Kimi Recon Notes
+1. Browser aliases resolve to canonical `browser/*` IDs.
+2. `transport=browser` goes through Playwright providers.
+3. `transport=api` goes through OpenAI-compatible or client-based API adapters.
 
-Recon was run against `https://www.kimi.com/` and existing Playwright artifacts were used to lock the initial DOM flow before coding the provider.
+## `/v1/models`
 
-Observed pre-auth flow:
+`/v1/models` returns canonical models only.
 
-1. Kimi lands on a chat shell immediately.
-2. `New Chat` is available as `/?chat_enter_method=new_chat`.
-3. The input is a custom editor exposed as an accessibility `textbox` and rendered as `.chat-input-editor`.
-4. The send control is `.send-button-container` and becomes disabled when there is no message.
-5. Real message send is blocked by a login wall with `Continue with Google`, `Phone number`, and `Verification code`.
+Browser aliases are not listed as primary entries, but they still resolve in routing.
 
-Chosen Kimi locators and why:
+Example response shape:
 
-| Page Signal | Primary Locator | Why |
-|-------------|-----------------|-----|
-| New chat/reset | `a.new-chat-btn[href="/?chat_enter_method=new_chat"]` | Stable URL-based navigation and visible sidebar action |
-| Input | `get_by_role("textbox")` then `.chat-input-editor` | Accessibility first, stable custom editor fallback |
-| Send | `.send-button-container:not(.disabled)` | Stable container class, works with custom SVG button |
-| Login wall | text `Continue with Google` | Most explicit auth gate signal after attempted send |
-
-Kimi provider behavior:
-
-1. Open `https://www.kimi.com/`.
-2. Detect the custom chat editor and dismiss obvious promotional overlays.
-3. Reset context through `/?chat_enter_method=new_chat`.
-4. Type into the custom editor via `textbox`/keyboard fallback.
-5. Click the custom send container.
-6. If Kimi raises the login wall, trigger Google auth bootstrap and save provider-specific storage state.
-7. Wait for completion using explicit loading/stop signals first, then text-stability fallback.
-8. Extract the response from assistant-like containers first, then from the visible chat container after filtering known chrome text.
-
-## Discovered Selectors (from UI Recon)
-
-After browser auto-discovery, these selectors were found to work with Qwen Chat:
-
-| Element | Selector | Method |
-|---------|----------|--------|
-| Message Input | `textarea[placeholder*="Чем"]` | Placeholder-based |
-| Send Button | `button:has(img[src*="send"])` | Image src pattern |
-| Assistant Message | `main p:last-of-type` | DOM structure |
-| New Chat | Navigate to `/` | URL-based reset |
-
-### How selectors were discovered
-
-1. **Navigation**: Opened https://chat.qwen.ai/ in Playwright
-2. **Input**: Found textbox with placeholder "Чем я могу помочь вам сегодня?"
-3. **Send button**: Located as 2nd button after input container
-4. **Response**: Found in `<main>` section as `<p>` element
-5. **New chat**: Navigate to root URL `/` resets to fresh chat
-
-## Project Structure
-
-```
-app/
-├── main.py                    # FastAPI app, lifespan, DI
-├── api/
-│   └── routes_openai.py       # OpenAI-compatible endpoints
-├── schemas/
-│   └── openai.py              # Pydantic models for OpenAI API
-├── services/
-│   └── chat_proxy_service.py  # Business logic orchestration
-├── browser/
-│   ├── internal_chat_client.py # Playwright client (discovered selectors)
-│   ├── session_pool.py         # Browser session management
-│   └── recon.py                # UI discovery utilities
-├── core/
-│   ├── config.py               # Pydantic Settings with real selectors
-│   ├── logging.py              # Structured logging
-│   └── errors.py               # Custom exceptions
-└── utils/
-    ├── message_parser.py       # Extract last user message
-    └── openai_mapper.py        # Response mapping
-scripts/
-└── recon_chat_ui.py           # Standalone UI discovery script
-tests/
-├── test_message_parser.py
-├── test_openai_mapper.py
-├── test_api_routes.py
-└── test_config.py
-```
-
-## API Endpoints
-
-### GET /health
-Returns service health status.
-
-### GET /v1/models
-Returns list of available models.
-
-### POST /v1/chat/completions
-Send a chat message to Qwen Chat via browser automation.
-
-**Request:**
 ```json
 {
-  "model": "internal-web-chat",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ],
-  "temperature": 0.7,
-  "max_tokens": 2048,
-  "stream": false
-}
-```
-
-**Response:**
-```json
-{
-  "id": "chatcmpl-xxx",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "internal-web-chat",
-  "choices": [
+  "object": "list",
+  "data": [
     {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Hello! How can I help you?"
-      },
-      "finish_reason": "stop"
+      "id": "browser/qwen",
+      "object": "model",
+      "created": 1775380000,
+      "owned_by": "qwen",
+      "provider_id": "qwen",
+      "transport": "browser",
+      "source_type": "browser",
+      "enabled": true,
+      "available": true
+    },
+    {
+      "id": "api/g4f-auto/default",
+      "object": "model",
+      "created": 1775380000,
+      "owned_by": "g4f-auto",
+      "provider_id": "g4f-auto",
+      "transport": "api",
+      "source_type": "g4f_openai",
+      "enabled": true,
+      "available": true
     }
-  ],
-  "usage": {
-    "prompt_tokens": 0,
-    "completion_tokens": 0,
-    "total_tokens": 0
-  }
+  ]
 }
 ```
 
-## Streaming Support (Future)
+## Diagnostics
 
-Streaming is not supported in v1.0. Architecture is ready for SSE implementation:
+Available endpoints:
 
-1. Response built incrementally in chunks
-2. Each chunk sent via `EventSourceResponse`
-3. `stream=True` will be handled in `chat_proxy_service.py`
+- `GET /health`
+- `GET /v1/models`
+- `GET /diagnostics/integrations`
+- `GET /diagnostics/models`
 
-## Development
+Diagnostics include:
 
-### Run Tests
+- enabled integrations
+- available integrations
+- API key requirements
+- disabled reasons
+- discovered models
+
+## Browser Providers
+
+Browser providers remain supported and now use canonical names:
+
+- `browser/qwen`
+- `browser/glm`
+- `browser/chatgpt`
+- `browser/yandex`
+- `browser/kimi`
+- `browser/deepseek`
+
+DeepSeek-specific notes:
+
+1. The app stores DeepSeek Playwright auth state automatically at `./secrets/deepseek.storage_state.json`.
+2. `DEEPSEEK_LOGIN` and `DEEPSEEK_PASSWORD` are only needed to refresh an expired session.
+3. `Глубокое мышление` and `Умный поиск` are disabled before every send.
+
+## Syncing The Source Page
+
+To refresh the checked-in `ready_to_use` snapshot when upstream docs change:
 
 ```bash
-make test
-# or
-pytest -v
+uv run python scripts/sync_g4f_ready_to_use.py
 ```
 
-### Code Quality
+This updates `app/integrations/ready_to_use_snapshot.md`, which is then parsed into integration definitions.
+
+## Tests
 
 ```bash
-make lint   # ruff
-make typecheck  # mypy
+uv run pytest -v
 ```
 
-### Docker
+Covered areas:
 
-```bash
-docker-compose up --build
-```
+- ready-to-use parser
+- browser canonical model aliases
+- API adapter discovery and fallback
+- unified `/v1/models`
+- diagnostics endpoint
+- disabled integrations without API key
 
-## UI Recon Script
+## Development Notes
 
-Run the standalone reconnaissance script to discover selectors:
+If you want to add a new integration when `ready_to_use.html` changes:
 
-```bash
-python scripts/recon_chat_ui.py --model kimi
-```
-
-This will:
-1. Open the selected provider in browser
-2. Explore provider-specific DOM structure
-3. Test various selectors
-4. Save artifacts (screenshots, HTML)
-5. Output discovered selectors
-
-## Troubleshooting
-
-### Browser fails to start
-- Ensure Playwright browsers are installed: `playwright install chromium`
-- Check `HEADLESS=false` for debugging
-
-### Selectors not found
-- Run `python scripts/recon_chat_ui.py --model kimi` to re-discover Kimi selectors
-- Check artifacts directory for screenshots on error
-
-### Kimi login wall
-- Put shared Google credentials in `./secrets/browser_auth.json`
-- Run `python scripts/bootstrap_google_auth.py --model kimi` if auto-bootstrap is disabled or if you want to pre-seed storage state
-- Check `KIMI_STORAGE_STATE_PATH` after bootstrap completes
-
-### Timeout errors
-- Increase `RESPONSE_TIMEOUT_SECONDS`
-- Check Qwen Chat service availability
-
-## License
-
-MIT
+1. Sync the snapshot.
+2. Update `app/integrations/definitions.py` mapping if a new source entry needs a new provider ID.
+3. Add TOML config overrides if the new integration needs auth or custom fallback models.
+4. Add tests for parsing and discovery behavior.

@@ -19,41 +19,70 @@ class GoogleCredentials:
     recovery_email: str | None = None
 
 
-class GoogleAuthBootstrapper:
-    """Reusable Google auth bootstrap for providers that expose a Google login entrypoint."""
+@dataclass(slots=True)
+class ProviderCredentials:
+    email: str
+    password: str
+
+
+class AuthBootstrapper:
+    """Bootstrap provider auth using provider-specific auth flows."""
 
     async def ensure_model_authenticated(self, model: str) -> str | None:
         provider_class = registry.get_provider_class(model)
         provider_config = registry.get_provider_config(model)
-        storage_state_path = provider_config.get("storage_state_path") or settings.auth_storage_state_path
+        storage_state_path = (
+            provider_config.get("storage_state_path") or settings.auth_storage_state_path
+        )
 
-        if provider_class.auth_provider != "google" or not provider_class.requires_auth:
+        if not provider_class.requires_auth:
             return storage_state_path
 
         if storage_state_path and Path(storage_state_path).exists():
             logger.debug("Auth storage state already exists", model=model, path=storage_state_path)
             return storage_state_path
 
-        if not settings.google_auth.auto_bootstrap:
-            raise BrowserError(
-                "Google auth is required but auto-bootstrap is disabled",
-                details={"model": model, "storage_state_path": storage_state_path},
-            )
+        auth_provider = provider_class.auth_provider
+        if auth_provider == "google":
+            if not settings.google_auth.auto_bootstrap:
+                raise BrowserError(
+                    "Google auth is required but auto-bootstrap is disabled",
+                    details={"model": model, "storage_state_path": storage_state_path},
+                )
 
-        credentials = self._load_google_credentials()
-        if not storage_state_path:
-            raise BrowserError(
-                "Google auth bootstrap requires a provider storage_state_path",
-                details={"model": model},
-            )
+            credentials = self._load_google_credentials()
+            if not storage_state_path:
+                raise BrowserError(
+                    "Google auth bootstrap requires a provider storage_state_path",
+                    details={"model": model},
+                )
 
-        await self._bootstrap_with_google(
-            model=model,
-            provider_class=provider_class,
-            provider_config=provider_config,
-            credentials=credentials,
-            storage_state_path=storage_state_path,
-        )
+            await self._bootstrap_with_google(
+                model=model,
+                provider_class=provider_class,
+                provider_config=provider_config,
+                credentials=credentials,
+                storage_state_path=storage_state_path,
+            )
+            return storage_state_path
+
+        if auth_provider == "credentials":
+            credentials = self._load_provider_credentials(model, provider_config)
+            if not storage_state_path:
+                raise BrowserError(
+                    "Credential-file auth bootstrap requires a provider storage_state_path",
+                    details={"model": model},
+                )
+
+            await self._bootstrap_with_credentials(
+                model=model,
+                provider_class=provider_class,
+                provider_config=provider_config,
+                credentials=credentials,
+                storage_state_path=storage_state_path,
+            )
+            return storage_state_path
+
         return storage_state_path
 
     def _load_google_credentials(self) -> GoogleCredentials:
@@ -97,6 +126,40 @@ class GoogleAuthBootstrapper:
             recovery_email=google_payload.get("recovery_email"),
         )
 
+    def _load_provider_credentials(self, model: str, provider_config: dict) -> ProviderCredentials:
+        login = provider_config.get("login")
+        password = provider_config.get("password")
+        if not login or not password:
+            raise BrowserError(
+                "Provider login/password are not configured",
+                details={"model": model},
+            )
+
+        email = str(login).strip()
+        password_value = str(password).strip()
+        if not email or not password_value:
+            raise BrowserError(
+                "Provider login/password must not be empty",
+                details={"model": model},
+            )
+
+        return ProviderCredentials(email=email, password=password_value)
+
+    def invalidate_model_storage_state(self, model: str) -> None:
+        provider_config = registry.get_provider_config(model)
+        storage_state_path = (
+            provider_config.get("storage_state_path") or settings.auth_storage_state_path
+        )
+        if not storage_state_path:
+            return
+
+        path = Path(storage_state_path)
+        if not path.exists():
+            return
+
+        path.unlink(missing_ok=True)
+        logger.info("Deleted expired provider storage state", model=model, path=str(path))
+
     async def _bootstrap_with_google(
         self,
         model: str,
@@ -126,7 +189,11 @@ class GoogleAuthBootstrapper:
             page = await context.new_page()
             provider = provider_class(page, provider_config=provider_config)
 
-            logger.info("Bootstrapping provider auth via Google", model=model, provider_id=provider_class.provider_id)
+            logger.info(
+                "Bootstrapping provider auth via Google",
+                model=model,
+                provider_id=provider_class.provider_id,
+            )
             await provider.navigate_to_chat()
             logger.info("Provider page opened; starting Google login", model=model)
             google_page = await provider.begin_google_login()
@@ -135,6 +202,60 @@ class GoogleAuthBootstrapper:
             logger.info("Google credentials submitted", model=model)
             await provider.wait_for_authenticated_ready()
             logger.info("Provider became ready after login", model=model)
+            await context.storage_state(path=str(path))
+            logger.info("Saved provider storage state", model=model, path=str(path))
+        except Exception as exc:
+            if provider is not None:
+                try:
+                    await provider.save_debug_artifacts(f"auth bootstrap failed: {exc}")
+                except Exception:
+                    logger.debug("Failed to save provider auth artifacts", model=model)
+            raise
+        finally:
+            if context is not None:
+                await context.close()
+            if browser is not None:
+                await browser.close()
+            await playwright.stop()
+
+    async def _bootstrap_with_credentials(
+        self,
+        model: str,
+        provider_class,
+        provider_config: dict,
+        credentials: ProviderCredentials,
+        storage_state_path: str,
+    ) -> None:
+        path = Path(storage_state_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        playwright = await async_playwright().start()
+        browser = None
+        context = None
+        provider = None
+
+        try:
+            browser = await playwright.chromium.launch(
+                headless=settings.headless,
+                slow_mo=settings.browser_slowmo,
+            )
+            context = await browser.new_context(
+                viewport={"width": 1440, "height": 1100},
+                ignore_https_errors=True,
+            )
+            page = await context.new_page()
+            provider = provider_class(page, provider_config=provider_config)
+
+            logger.info(
+                "Bootstrapping provider auth via credentials file",
+                model=model,
+                provider_id=provider_class.provider_id,
+            )
+            await provider.navigate_to_chat()
+            await provider.authenticate_with_credentials(
+                {"email": credentials.email, "password": credentials.password}
+            )
+            await provider.wait_for_authenticated_ready()
             await context.storage_state(path=str(path))
             logger.info("Saved provider storage state", model=model, path=str(path))
         except Exception as exc:
@@ -261,4 +382,6 @@ class GoogleAuthBootstrapper:
         return None
 
 
-google_auth_bootstrapper = GoogleAuthBootstrapper()
+auth_bootstrapper = AuthBootstrapper()
+GoogleAuthBootstrapper = AuthBootstrapper
+google_auth_bootstrapper = auth_bootstrapper

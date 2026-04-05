@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Literal
 
 
@@ -37,7 +37,9 @@ class Message(BaseModel):
 class Choice(BaseModel):
     index: int
     message: Message
-    finish_reason: Optional[Literal["stop", "length", "content_filter", "tool_calls", "function_call"]] = None
+    finish_reason: Optional[
+        Literal["stop", "length", "content_filter", "tool_calls", "function_call"]
+    ] = None
 
 
 class Usage(BaseModel):
@@ -56,6 +58,8 @@ class ChatCompletionResponse(BaseModel):
 
 
 class Model(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str
     object: Literal["model"] = "model"
     created: int
