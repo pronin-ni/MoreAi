@@ -43,6 +43,7 @@ function selectModel(modelId) {
 
     if (selectedRadio) {
         selectedRadio.checked = true;
+        syncSelectedModelState(modelId);
         selectedRadio.closest('.model-item')?.scrollIntoView({ block: 'nearest' });
     }
 
@@ -87,11 +88,36 @@ function selectModel(modelId) {
     updateDiagnostics(modelId);
 }
 
+function syncSelectedModelState(modelId) {
+    document.querySelectorAll('.model-item').forEach((item) => {
+        item.classList.remove('selected');
+        const badge = item.querySelector('.badge-selected');
+        if (badge) {
+            badge.remove();
+        }
+    });
+
+    const selectedRadio = document.querySelector(`input[name="model_selection"][value="${modelId}"]`);
+    const selectedItem = selectedRadio?.closest('.model-item');
+    if (!selectedItem) {
+        return;
+    }
+
+    selectedItem.classList.add('selected');
+    if (!selectedItem.querySelector('.badge-selected')) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-selected';
+        badge.textContent = 'Selected';
+        const label = selectedItem.querySelector('.model-label');
+        label?.appendChild(badge);
+    }
+}
+
 function updateDiagnostics(modelId) {
     fetch(`/ui/diagnostics?model=${encodeURIComponent(modelId)}`)
         .then(r => r.text())
         .then(html => {
-            const panel = document.getElementById('diagnostics-panel');
+            const panel = document.getElementById('diagnostics-content-target');
             if (panel) {
                 panel.innerHTML = html;
             }
@@ -148,49 +174,23 @@ function initDiagnosticsToggle() {
     });
 }
 
-function isUiChatRequest(detail) {
-    const requestConfig = detail?.requestConfig;
-    const verb = requestConfig?.verb || requestConfig?.method || '';
-    const path = detail?.pathInfo?.requestPath || requestConfig?.path || requestConfig?.url || '';
-    return verb.toUpperCase() === 'POST' && path === '/ui/chat';
-}
-
-window.addEventListener('htmx:afterRequest', function(evt) {
-    if (isUiChatRequest(evt.detail)) {
-        const textarea = document.querySelector('textarea[name="message"]');
-        if (textarea) {
-            textarea.value = '';
-            textarea.style.height = '';
-        }
-    }
-});
-
-document.body.addEventListener('htmx:configRequest', function(evt) {
-    if (isUiChatRequest(evt.detail)) {
-        const convInput = document.querySelector('input[name="conversation_json"]');
-        if (convInput) {
-            let messages = [];
-            try {
-                messages = JSON.parse(convInput.value || '[]');
-            } catch (e) {
-                messages = [];
-            }
-            
-            const textarea = document.querySelector('textarea[name="message"]');
-            if (textarea && textarea.value.trim()) {
-                messages.push({
-                    role: 'user',
-                    content: textarea.value.trim(),
-                    timestamp: new Date().toISOString()
-                });
-                convInput.value = JSON.stringify(messages);
-            }
-        }
-    }
-});
-
 document.body.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.target?.id === 'models-panel') {
         initModelSelection();
+    }
+
+    if (evt.target?.id === 'chat-response-target') {
+        const state = evt.target.querySelector('.chat-response-state');
+        const status = state?.dataset.chatStatus || '';
+        const textarea = document.querySelector('textarea[name="message"]');
+
+        if (textarea && (status === 'success' || status === 'cleared')) {
+            textarea.value = '';
+            textarea.style.height = '';
+        }
+
+        if (textarea) {
+            textarea.focus();
+        }
     }
 });

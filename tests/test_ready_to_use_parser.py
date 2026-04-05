@@ -50,4 +50,4 @@ class TestReadyToUseParser:
         }
 
     def test_builds_expected_definition_count(self):
-        assert len(READY_TO_USE_DEFINITIONS) == 25
+        assert len(READY_TO_USE_DEFINITIONS) == 26

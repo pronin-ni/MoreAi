@@ -1,6 +1,7 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
 from typing import Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BrowserSettings(BaseSettings):
@@ -81,6 +82,19 @@ class Settings(BaseSettings):
 
     headless: bool = Field(default=True)
     browser_pool_size: int = Field(default=5, ge=1)
+    browser_queue_max_size: int = Field(default=20, ge=1)
+    browser_enqueue_timeout_seconds: int = Field(default=2, ge=1)
+    browser_queue_wait_timeout_seconds: int = Field(default=30, ge=1)
+    browser_task_execution_timeout_seconds: int = Field(default=120, ge=1)
+    browser_startup_timeout_seconds: int = Field(default=30, ge=1)
+    browser_shutdown_grace_seconds: int = Field(default=10, ge=1)
+    browser_max_retries: int = Field(default=1, ge=0)
+    browser_retry_backoff_seconds: float = Field(default=0.5, ge=0.0)
+    browser_provider_concurrency_limits: dict[str, int] = Field(default_factory=dict)
+    browser_provider_circuit_failure_threshold: int = Field(default=3, ge=1)
+    browser_provider_circuit_open_seconds: int = Field(default=30, ge=1)
+    browser_provider_adaptive_cooldown_seconds: float = Field(default=0.25, ge=0.0)
+    browser_provider_adaptive_cooldown_max_seconds: float = Field(default=5.0, ge=0.0)
     response_timeout_seconds: int = Field(default=120, ge=1)
     retry_attempts: int = Field(default=1, ge=0)
     browser_slowmo: int = Field(default=0, ge=0)

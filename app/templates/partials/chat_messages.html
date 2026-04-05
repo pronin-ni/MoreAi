@@ -30,25 +30,11 @@
 </div>
 {% endfor %}
 
-{% if last_response %}
-<div class="message message-assistant" id="last-response">
+{% if error_message %}
+<div class="message message-assistant error-message">
     <div class="message-header">
-        <span class="message-role">{{ selected_model }}</span>
+        <span class="message-role">Error</span>
     </div>
-    <div class="message-content">
-        {{ last_response|safe }}
-    </div>
-    <div class="message-actions">
-        <button
-            class="btn-icon-small"
-            onclick="copyMessage(this)"
-            title="Copy response"
-        >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-            </svg>
-        </button>
-    </div>
+    <div class="message-content error-content">{{ error_message }}</div>
 </div>
 {% endif %}

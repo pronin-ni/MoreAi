@@ -69,6 +69,18 @@ def render_markdown(content: str) -> str:
     return bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs)
 
 
+def ensure_message_timestamps(messages: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for message in messages:
+        normalized.append(
+            {
+                **message,
+                "timestamp": message.get("timestamp") or time.strftime("%H:%M"),
+            }
+        )
+    return normalized
+
+
 def get_default_selected_model() -> tuple[str, str, str, str]:
     browser_models, api_models = model_service.group_models()
 
@@ -220,19 +232,22 @@ async def ui_chat(
     action: str = Form(""),
 ):
     if action == "clear":
+        resolved = (
+            resolve_model_for_diagnostics(model) if model else {"transport": "", "provider_id": ""}
+        )
         html = render_template(
             "partials/chat_response.html",
             {
                 "request": request,
                 "messages": [],
-                "last_response": "",
+                "conversation_json": "[]",
                 "last_duration": None,
                 "usage": None,
-                "last_status": "",
+                "last_status": "cleared",
                 "error_message": "",
                 "selected_model": model,
-                "selected_transport": "",
-                "provider_id": "",
+                "selected_transport": resolved["transport"],
+                "provider_id": resolved["provider_id"],
             },
         )
         return HTMLResponse(content=html)
@@ -243,7 +258,7 @@ async def ui_chat(
             {
                 "request": request,
                 "messages": [],
-                "last_response": "",
+                "conversation_json": conversation_json or "[]",
                 "last_duration": None,
                 "usage": None,
                 "last_status": "error",
@@ -257,7 +272,9 @@ async def ui_chat(
 
     try:
         messages = json.loads(conversation_json) if conversation_json else []
+        messages = ensure_message_timestamps(messages)
         messages.append({"role": "user", "content": message})
+        messages = ensure_message_timestamps(messages)
 
         chat_request = ChatCompletionRequest(
             model=model,
@@ -275,10 +292,11 @@ async def ui_chat(
         messages.append(
             {
                 "role": "assistant",
-                "content": assistant_content,
+                "content": assistant_content_html,
                 "timestamp": time.strftime("%H:%M"),
             }
         )
+        conversation_payload = json.dumps(messages, ensure_ascii=False)
 
         resolved = resolve_model_for_diagnostics(model)
 
@@ -287,7 +305,7 @@ async def ui_chat(
             {
                 "request": request,
                 "messages": messages,
-                "last_response": assistant_content_html,
+                "conversation_json": conversation_payload,
                 "last_duration": duration,
                 "usage": response.usage if response.usage else None,
                 "last_status": "success",
@@ -301,19 +319,22 @@ async def ui_chat(
 
     except Exception as e:
         logger.exception("UI chat error", error=str(e))
+        resolved = (
+            resolve_model_for_diagnostics(model) if model else {"transport": "", "provider_id": ""}
+        )
         html = render_template(
             "partials/chat_response.html",
             {
                 "request": request,
-                "messages": [],
-                "last_response": "",
+                "messages": ensure_message_timestamps(messages) if "messages" in locals() else [],
+                "conversation_json": conversation_json or "[]",
                 "last_duration": None,
                 "usage": None,
                 "last_status": "error",
                 "error_message": str(e),
                 "selected_model": model,
-                "selected_transport": "",
-                "provider_id": "",
+                "selected_transport": resolved["transport"],
+                "provider_id": resolved["provider_id"],
             },
         )
         return HTMLResponse(content=html)

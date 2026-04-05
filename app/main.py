@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes_openai import router as openai_router
 from app.api.routes_ui import router as ui_router
-from app.browser.session_pool import pool
+from app.browser.execution.dispatcher import browser_dispatcher
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.errors import APIError
@@ -22,8 +22,8 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting MoreAI Proxy service", version="0.1.0")
 
-    await pool.initialize()
-    logger.info("Browser pool initialized")
+    await browser_dispatcher.initialize()
+    logger.info("Browser dispatcher initialized")
 
     await unified_registry.initialize()
     logger.info("Unified registry initialized")
@@ -31,8 +31,8 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
-    await pool.shutdown()
-    logger.info("Browser pool shutdown complete")
+    await browser_dispatcher.shutdown()
+    logger.info("Browser dispatcher shutdown complete")
 
 
 app = FastAPI(
