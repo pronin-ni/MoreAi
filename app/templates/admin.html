@@ -582,9 +582,64 @@
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Baseline Refresh</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="refresh-status-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Attempts</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Successes</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Last Result</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="refresh-status-tbody">
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button id="refresh-all-btn" class="btn-secondary">↻ Refresh All Providers</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Refresh Events</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="refresh-events-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Updates</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Drift/Abort</th>
+                                </tr>
+                            </thead>
+                            <tbody id="refresh-events-tbody">
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">No events yet</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Import / Export</h3>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
+                        <button id="export-baselines-btn" class="btn-secondary">📤 Export Baselines</button>
+                        <button id="export-overrides-btn" class="btn-secondary">📤 Export Overrides</button>
+                        <button id="import-baselines-btn" class="btn-secondary">📥 Import Baselines</button>
+                        <button id="import-overrides-btn" class="btn-secondary">📥 Import Overrides</button>
+                    </div>
+                    <input type="file" id="import-file-input" style="display: none;" accept=".json">
+                    <div id="import-result" style="margin-top: 0.5rem; font-size: 0.8rem;"></div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Quick Actions</h3>
                     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                        <button id="baseline-refresh-btn" class="btn-secondary">↻ Refresh</button>
+                        <button id="baseline-refresh-btn" class="btn-secondary">↻ Refresh Data</button>
                         <button id="baseline-clear-btn" class="btn-secondary" style="border-color: var(--admin-error); color: var(--admin-error);">Clear All Baselines</button>
                     </div>
                 </div>

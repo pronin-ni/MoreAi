@@ -679,6 +679,16 @@
         return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
     }
 
+    function downloadJson(data, filename) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
     // ── Sandbox ──
     async function loadSandboxModels() {
         try {
@@ -1009,6 +1019,49 @@
         } catch (e) {
             console.error('Failed to load drift events:', e);
         }
+
+        // Refresh status
+        try {
+            const resp = await fetchApi('/dom-refresh/status');
+            const data = await resp.json();
+            const statusTbody = document.getElementById('refresh-status-tbody');
+            if (data.per_provider && Object.keys(data.per_provider).length > 0) {
+                statusTbody.innerHTML = Object.entries(data.per_provider).map(([pid, stats]) => {
+                    const statusColor = stats.last_result === 'success' ? '#4ade80' : stats.last_result === 'partial' ? '#fbbf24' : stats.last_result === 'aborted' ? '#60a5fa' : '#f87171';
+                    return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.4rem;">${pid}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${stats.attempts || 0}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${stats.successes || 0}</td>
+                        <td style="padding: 0.4rem; text-align: center; color: ${statusColor};">${stats.last_result || '—'}</td>
+                        <td style="padding: 0.4rem; text-align: center;">
+                            <button class="btn-refresh-single" data-provider="${pid}" style="padding: 2px 6px; background: #60a5fa; border: none; border-radius: 2px; cursor: pointer; color: #fff;">↻</button>
+                        </td>
+                    </tr>`;
+                }).join('');
+            } else {
+                statusTbody.innerHTML = '<tr><td colspan="5" style="padding: 1rem; text-align: center;">No refresh data yet</td></tr>';
+            }
+
+            // Recent refresh events
+            const eventsResp = await fetchApi('/dom-refresh/events');
+            const eventsData = await eventsResp.json();
+            const eventsTbody = document.getElementById('refresh-events-tbody');
+            if (eventsData && eventsData.length > 0) {
+                eventsTbody.innerHTML = eventsData.slice(-10).reverse().map(e => {
+                    const statusColor = e.status === 'success' ? '#4ade80' : e.status === 'partial' ? '#fbbf24' : e.status === 'aborted' ? '#60a5fa' : '#f87171';
+                    const driftInfo = e.drift_detected ? `⚠️ drift: ${e.drift_summary.substring(0, 30)}` : (e.abort_reason ? `🚫 ${e.abort_reason.substring(0, 30)}` : '—');
+                    return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.3rem;">${e.provider_id}</td>
+                        <td style="padding: 0.3rem; text-align: center; color: ${statusColor};">${e.status}</td>
+                        <td style="padding: 0.3rem; text-align: center;">${e.duration_ms ? e.duration_ms.toFixed(0) + 'ms' : '—'}</td>
+                        <td style="padding: 0.3rem; text-align: center;">${e.baseline_updates || 0}</td>
+                        <td style="padding: 0.3rem; font-size: 0.7rem;">${driftInfo}</td>
+                    </tr>`;
+                }).join('');
+            }
+        } catch (e) {
+            console.error('Failed to load refresh status:', e);
+        }
     }
 
     // ── Selector Maintenance ──
@@ -1117,6 +1170,98 @@
                 alert(`Failed to clear baselines: ${e.message}`);
             }
         });
+
+        // Refresh all
+        const refreshAllBtn = document.getElementById('refresh-all-btn');
+        if (refreshAllBtn) refreshAllBtn.addEventListener('click', async () => {
+            if (!confirm('Run baseline refresh for ALL providers? This may take a while.')) return;
+            refreshAllBtn.disabled = true;
+            refreshAllBtn.textContent = 'Running...';
+            try {
+                await fetchApi('/dom-refresh/run-all', { method: 'POST' });
+                loadBaseline();
+            } catch (e) {
+                alert(`Refresh failed: ${e.message}`);
+            } finally {
+                refreshAllBtn.disabled = false;
+                refreshAllBtn.textContent = '↻ Refresh All Providers';
+            }
+        });
+
+        // Export baselines
+        const exportBaselinesBtn = document.getElementById('export-baselines-btn');
+        if (exportBaselinesBtn) exportBaselinesBtn.addEventListener('click', async () => {
+            try {
+                const resp = await fetchApi('/dom-baseline/export');
+                const data = await resp.json();
+                downloadJson(data, `dom-baselines-${new Date().toISOString().slice(0, 10)}.json`);
+            } catch (e) {
+                alert(`Export failed: ${e.message}`);
+            }
+        });
+
+        // Export overrides
+        const exportOverridesBtn = document.getElementById('export-overrides-btn');
+        if (exportOverridesBtn) exportOverridesBtn.addEventListener('click', async () => {
+            try {
+                const resp = await fetchApi('/selector-overrides/export');
+                const data = await resp.json();
+                downloadJson(data, `selector-overrides-${new Date().toISOString().slice(0, 10)}.json`);
+            } catch (e) {
+                alert(`Export failed: ${e.message}`);
+            }
+        });
+
+        // Import baselines
+        const importBaselinesBtn = document.getElementById('import-baselines-btn');
+        const importFileInput = document.getElementById('import-file-input');
+        if (importBaselinesBtn) importBaselinesBtn.addEventListener('click', () => {
+            importFileInput.dataset.importType = 'baselines';
+            importFileInput.click();
+        });
+
+        // Import overrides
+        const importOverridesBtn = document.getElementById('import-overrides-btn');
+        if (importOverridesBtn) importOverridesBtn.addEventListener('click', () => {
+            importFileInput.dataset.importType = 'overrides';
+            importFileInput.click();
+        });
+
+        // Handle file import
+        if (importFileInput) {
+            importFileInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const importType = importFileInput.dataset.importType;
+                try {
+                    const content = await file.text();
+                    const data = JSON.parse(content);
+
+                    // Dry run first
+                    const dryRunResp = await fetchApi(
+                        importType === 'baselines' ? '/dom-baseline/import?dry_run=true' : '/selector-overrides/import?dry_run=true',
+                        { method: 'POST', body: JSON.stringify(data) }
+                    );
+                    const dryRunData = await dryRunResp.json();
+
+                    const msg = `Import preview:\n${dryRunData.total_to_import} items to import\n${dryRunData.new} new, ${dryRunData.updates} updates`;
+                    if (!confirm(msg + '\n\nProceed with import?')) return;
+
+                    // Actual import
+                    const importResp = await fetchApi(
+                        importType === 'baselines' ? '/dom-baseline/import' : '/selector-overrides/import',
+                        { method: 'POST', body: JSON.stringify(data) }
+                    );
+                    const importData = await importResp.json();
+                    document.getElementById('import-result').innerHTML = `<span style="color: var(--admin-success);">✅ Imported ${importData.imported} new, updated ${importData.updated}</span>`;
+                    loadBaseline();
+                } catch (err) {
+                    document.getElementById('import-result').innerHTML = `<span style="color: var(--admin-error);">❌ Import failed: ${err.message}</span>`;
+                }
+                e.target.value = '';
+            });
+        }
     });
 
     // Event delegation for dynamic suggestion/override buttons
@@ -1168,6 +1313,18 @@
                 loadMaintenance();
             } catch (err) {
                 alert(`Failed to reset override: ${err.message}`);
+            }
+        }
+
+        // Refresh single provider
+        if (target.classList.contains('btn-refresh-single')) {
+            const provider = target.dataset.provider;
+            if (!confirm(`Run baseline refresh for ${provider}?`)) return;
+            try {
+                await fetchApi(`/dom-refresh/run/${provider}`, { method: 'POST' });
+                loadBaseline();
+            } catch (err) {
+                alert(`Refresh failed: ${err.message}`);
             }
         }
     });

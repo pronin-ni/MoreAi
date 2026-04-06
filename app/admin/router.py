@@ -1436,6 +1436,204 @@ async def reset_override(
     )
 
 
+# ── DOM Refresh ──
+
+
+@router.post("/dom-refresh/run/{provider_id}")
+async def run_refresh_single(provider_id: str, _=Depends(require_admin)):
+    """Run baseline refresh for a single provider."""
+    from app.browser.dom.refresh import baseline_refresher
+
+    result = await baseline_refresher._refresh_provider(provider_id)
+    return result.to_dict()
+
+
+@router.post("/dom-refresh/run-all")
+async def run_refresh_all(_=Depends(require_admin)):
+    """Run baseline refresh for all providers."""
+    from app.browser.dom.refresh import baseline_refresher
+
+    results = await baseline_refresher._run_refresh_cycle()
+    return {
+        "providers": [r.to_dict() for r in results],
+        "summary": baseline_refresher.get_summary(),
+    }
+
+
+@router.get("/dom-refresh/status")
+async def get_refresh_status(_=Depends(require_admin)):
+    """Get refresh status and stats."""
+    from app.browser.dom.refresh import baseline_refresher
+
+    return baseline_refresher.get_summary()
+
+
+@router.get("/dom-refresh/events")
+async def get_refresh_events(limit: int = 20, _=Depends(require_admin)):
+    """Get recent refresh events."""
+    from app.browser.dom.refresh import baseline_refresher
+
+    return baseline_refresher.get_recent_results(limit)
+
+
+# ── Import / Export ──
+
+EXPORT_VERSION = "1.0"
+
+
+@router.get("/dom-baseline/export")
+async def export_baselines(
+    include_drift: bool = False,
+    include_suggestions: bool = False,
+    _=Depends(require_admin),
+):
+    """Export DOM baselines (and optionally drift/suggestions) as JSON."""
+    from app.browser.dom.persistent_store import persistent_dom_store
+
+    data = {
+        "version": EXPORT_VERSION,
+        "exported_at": time.time(),
+        "baselines": persistent_dom_store.get_baselines(),
+    }
+    if include_drift:
+        data["drift_events"] = persistent_dom_store.get_drift_events(limit=500)
+    if include_suggestions:
+        from app.browser.dom.persistent_store import persistent_dom_store as store
+        data["suggestions"] = store.get_suggestions(limit=500)
+    return data
+
+
+@router.post("/dom-baseline/import")
+async def import_baselines(
+    data: dict,
+    dry_run: bool = False,
+    merge: bool = True,
+    _=Depends(require_admin),
+):
+    """Import DOM baselines from JSON export.
+
+    Validates version, schema, and handles conflicts via merge mode.
+    """
+    from app.browser.dom.persistent_store import persistent_dom_store
+
+    # Validate version
+    version = data.get("version")
+    if not version:
+        return JSONResponse(status_code=400, content={"error": "Missing version field"})
+
+    # Validate baselines
+    baselines = data.get("baselines")
+    if not baselines or not isinstance(baselines, list):
+        return JSONResponse(status_code=400, content={"error": "Missing or invalid baselines array"})
+
+    # Validate each baseline
+    required_fields = ["provider_id", "role", "selector"]
+    invalid = []
+    for i, b in enumerate(baselines):
+        for f in required_fields:
+            if f not in b:
+                invalid.append(f"baseline[{i}] missing '{f}'")
+    if invalid:
+        return JSONResponse(status_code=400, content={"error": "Invalid baselines", "details": invalid})
+
+    if dry_run:
+        # Preview summary
+        existing = persistent_dom_store.get_baselines()
+        existing_keys = {(b["provider_id"], b["role"]) for b in existing}
+        new_keys = {(b["provider_id"], b["role"]) for b in baselines}
+        to_update = existing_keys & new_keys
+        to_create = new_keys - existing_keys
+
+        return {
+            "dry_run": True,
+            "total_to_import": len(baselines),
+            "new": len(to_create),
+            "updates": len(to_update),
+            "conflicts": [{"provider_id": k[0], "role": k[1]} for k in to_update],
+        }
+
+    # Actual import
+    imported = 0
+    updated = 0
+    for b in baselines:
+        existing = persistent_dom_store.get_baseline(b["provider_id"], b["role"])
+        if existing and not merge:
+            continue  # Skip existing if not merging
+        persistent_dom_store.save_baseline(b)
+        if existing:
+            updated += 1
+        else:
+            imported += 1
+
+    return {
+        "imported": imported,
+        "updated": updated,
+        "total": len(baselines),
+    }
+
+
+@router.get("/selector-overrides/export")
+async def export_overrides(_=Depends(require_admin)):
+    """Export selector overrides as JSON."""
+    from app.browser.dom.overrides import selector_override_manager
+
+    return {
+        "version": EXPORT_VERSION,
+        "exported_at": time.time(),
+        "overrides": selector_override_manager.get_all_overrides(),
+    }
+
+
+@router.post("/selector-overrides/import")
+async def import_overrides(
+    data: dict,
+    dry_run: bool = False,
+    _=Depends(require_admin),
+):
+    """Import selector overrides from JSON export."""
+    from app.browser.dom.persistent_store import persistent_dom_store
+
+    version = data.get("version")
+    if not version:
+        return JSONResponse(status_code=400, content={"error": "Missing version field"})
+
+    overrides = data.get("overrides")
+    if not overrides or not isinstance(overrides, list):
+        return JSONResponse(status_code=400, content={"error": "Missing or invalid overrides array"})
+
+    required = ["provider_id", "role", "selector"]
+    invalid = []
+    for i, o in enumerate(overrides):
+        for f in required:
+            if f not in o:
+                invalid.append(f"overrides[{i}] missing '{f}'")
+    if invalid:
+        return JSONResponse(status_code=400, content={"error": "Invalid overrides", "details": invalid})
+
+    if dry_run:
+        existing = persistent_dom_store.get_overrides()
+        existing_keys = {(o["provider_id"], o["role"]) for o in existing}
+        new_keys = {(o["provider_id"], o["role"]) for o in overrides}
+        return {
+            "dry_run": True,
+            "total_to_import": len(overrides),
+            "new": len(new_keys - existing_keys),
+            "updates": len(existing_keys & new_keys),
+        }
+
+    imported = 0
+    updated = 0
+    for o in overrides:
+        existing = persistent_dom_store.get_override(o["provider_id"], o["role"])
+        persistent_dom_store.save_override(o)
+        if existing:
+            updated += 1
+        else:
+            imported += 1
+
+    return {"imported": imported, "updated": updated, "total": len(overrides)}
+
+
 def _get_provider_health_summary(provider_id: str) -> dict:
     """Get health summary for a provider."""
     try:
