@@ -3,8 +3,8 @@ from typing import Literal
 
 ApiKeyRequirement = Literal["none", "required", "unknown"]
 IntegrationType = Literal["openai_compatible", "client_based"]
-TransportType = Literal["browser", "api"]
-SourceType = Literal["browser", "g4f_openai", "g4f_client", "external_api", "client_based"]
+TransportType = Literal["browser", "api", "agent"]
+SourceType = Literal["browser", "g4f_openai", "g4f_client", "external_api", "client_based", "opencode_server"]
 DefinitionGroup = Literal[
     "ready_to_use_base_url",
     "supported_api_route",

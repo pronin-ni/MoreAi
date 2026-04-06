@@ -1,17 +1,18 @@
 from contextlib import asynccontextmanager
 
-import app.browser.providers  # noqa: F401
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import app.agents.opencode.provider  # noqa: F401
+import app.browser.providers  # noqa: F401
 from app.api.routes_openai import router as openai_router
 from app.api.routes_ui import router as ui_router
 from app.browser.execution.dispatcher import browser_dispatcher
 from app.core.config import settings
-from app.core.logging import configure_logging, get_logger
 from app.core.errors import APIError
+from app.core.logging import configure_logging, get_logger
 from app.registry.unified import unified_registry
 
 configure_logging(settings.log_level)
@@ -33,6 +34,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down MoreAI Proxy service")
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")
+
+    # Shutdown managed OpenCode subprocess
+    from app.agents.opencode.provider import provider as opencode_provider
+    await opencode_provider.shutdown()
+    logger.info("OpenCode provider shutdown complete")
 
 
 app = FastAPI(

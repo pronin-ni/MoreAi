@@ -82,16 +82,19 @@ def ensure_message_timestamps(messages: list[dict]) -> list[dict]:
 
 
 def get_default_selected_model() -> tuple[str, str, str, str]:
-    browser_models, api_models = model_service.group_models()
+    browser_models, api_models, agent_models = model_service.group_models()
 
-    selected = next(
-        (
-            model
-            for model in api_models
-            if model.is_selectable and model.provider_id == "ollamafreeapi"
-        ),
-        None,
-    )
+    # Prefer first agent model (free, no auth needed)
+    selected = next((model for model in agent_models if model.is_selectable), None)
+    if selected is None:
+        selected = next(
+            (
+                model
+                for model in api_models
+                if model.is_selectable and model.provider_id == "ollamafreeapi"
+            ),
+            None,
+        )
     if selected is None:
         selected = next((model for model in api_models if model.is_selectable), None)
     if selected is None:
@@ -107,8 +110,8 @@ def get_model_display_name(model_id: str) -> str:
     if not model_id:
         return ""
 
-    browser_models, api_models = model_service.group_models()
-    for model in [*api_models, *browser_models]:
+    browser_models, api_models, agent_models = model_service.group_models()
+    for model in [*api_models, *browser_models, *agent_models]:
         if model.id == model_id:
             return model.display_name
 
@@ -117,7 +120,7 @@ def get_model_display_name(model_id: str) -> str:
 
 @router.get("/ui", response_class=HTMLResponse)
 async def ui_index(request: Request):
-    browser_models, api_models = model_service.group_models()
+    browser_models, api_models, agent_models = model_service.group_models()
     selected_model, selected_transport, provider_id, selected_display_name = (
         get_default_selected_model()
     )
@@ -128,6 +131,7 @@ async def ui_index(request: Request):
             "request": request,
             "browser_models": browser_models,
             "api_models": api_models,
+            "agent_models": agent_models,
             "selected_model": selected_model,
             "selected_display_name": selected_display_name,
             "selected_transport": selected_transport,
@@ -151,8 +155,9 @@ async def ui_models(request: Request, q: str = "", selected: str = ""):
         filtered = model_service.filter_models(q)
         browser_models = [m for m in filtered if m.transport == "browser"]
         api_models = [m for m in filtered if m.transport == "api"]
+        agent_models = [m for m in filtered if m.transport == "agent"]
     else:
-        browser_models, api_models = model_service.group_models()
+        browser_models, api_models, agent_models = model_service.group_models()
 
     html = render_template(
         "partials/models_list.html",
@@ -160,6 +165,7 @@ async def ui_models(request: Request, q: str = "", selected: str = ""):
             "request": request,
             "browser_models": browser_models,
             "api_models": api_models,
+            "agent_models": agent_models,
             "selected_model": selected,
             "selected_display_name": get_model_display_name(selected),
             "search_query": q,

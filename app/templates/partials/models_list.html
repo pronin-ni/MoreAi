@@ -1,4 +1,4 @@
-{% if browser_models or api_models %}
+{% if browser_models or api_models or agent_models %}
 <div class="models-list">
     {% if browser_models %}
     <div class="model-group">
@@ -16,21 +16,9 @@
                         value="{{ model.id }}"
                         data-transport="{{ model.transport }}"
                         data-display-name="{{ model.display_name }}"
-                        {%
-                        if model.id == selected_model
-                        %}checked{%
-                        endif
-                        %}
-                        {%
-                        if not model.is_selectable
-                        %}disabled{%
-                        endif
-                        %}
-                        {%
-                        if model.is_selectable
-                        %}onclick="selectModel('{{ model.id }}')"{%
-                        endif
-                        %}
+                        {% if model.id == selected_model %}checked{% endif %}
+                        {% if not model.is_selectable %}disabled{% endif %}
+                        {% if model.is_selectable %}onclick="selectModel('{{ model.id }}')"{% endif %}
                     >
                     <span class="model-display-name">{{ model.display_name }}</span>
                     {% if model.id == selected_model %}
@@ -64,21 +52,45 @@
                         value="{{ model.id }}"
                         data-transport="{{ model.transport }}"
                         data-display-name="{{ model.display_name }}"
-                        {%
-                        if model.id == selected_model
-                        %}checked{%
-                        endif
-                        %}
-                        {%
-                        if not model.is_selectable
-                        %}disabled{%
-                        endif
-                        %}
-                        {%
-                        if model.is_selectable
-                        %}onclick="selectModel('{{ model.id }}')"{%
-                        endif
-                        %}
+                        {% if model.id == selected_model %}checked{% endif %}
+                        {% if not model.is_selectable %}disabled{% endif %}
+                        {% if model.is_selectable %}onclick="selectModel('{{ model.id }}')"{% endif %}
+                    >
+                    <span class="model-display-name">{{ model.display_name }}</span>
+                    {% if model.id == selected_model %}
+                    <span class="badge badge-selected">Selected</span>
+                    {% endif %}
+                    {% if not model.available %}
+                    <span class="badge badge-unavailable">Unavailable</span>
+                    {% elif not model.enabled %}
+                    <span class="badge badge-disabled">Disabled</span>
+                    {% endif %}
+                </label>
+            </li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if agent_models %}
+    <div class="model-group">
+        <div class="model-group-header">
+            <span class="badge badge-agent">Agent</span>
+            <span class="model-count">{{ agent_models|length }}</span>
+        </div>
+        <ul>
+        {% for model in agent_models %}
+            <li class="model-item{% if model.id == selected_model %} selected{% endif %}{% if not model.is_selectable %} disabled{% endif %}">
+                <label class="model-label{% if not model.is_selectable %} model-unavailable{% endif %}">
+                    <input
+                        type="radio"
+                        name="model_selection"
+                        value="{{ model.id }}"
+                        data-transport="{{ model.transport }}"
+                        data-display-name="{{ model.display_name }}"
+                        {% if model.id == selected_model %}checked{% endif %}
+                        {% if not model.is_selectable %}disabled{% endif %}
+                        {% if model.is_selectable %}onclick="selectModel('{{ model.id }}')"{% endif %}
                     >
                     <span class="model-display-name">{{ model.display_name }}</span>
                     {% if model.id == selected_model %}

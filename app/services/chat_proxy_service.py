@@ -1,4 +1,4 @@
-from app.core.config import settings
+from app.agents.completion_service import agent_completion_service
 from app.core.logging import get_logger
 from app.core.errors import InternalError
 from app.registry.unified import unified_registry
@@ -40,6 +40,13 @@ class ChatProxyService:
             )
         if resolved_model.transport == "api":
             return await api_completion_service.process_completion(request, resolved_model)
+        if resolved_model.transport == "agent":
+            return await agent_completion_service.process_completion(
+                request,
+                request_id,
+                resolved_model.canonical_id,
+                resolved_model.provider_id,
+            )
 
         raise InternalError(
             f"Unsupported transport for model {resolved_model.canonical_id}",

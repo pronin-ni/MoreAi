@@ -27,6 +27,7 @@
     
     --badge-browser: #6f42c1;
     --badge-api: #20c997;
+    --badge-agent: #fd7e14;
     
     --sidebar-width: 280px;
     --diag-width: 300px;
@@ -774,6 +775,11 @@ html, body {
 
 .badge-api {
     background: var(--badge-api);
+    color: white;
+}
+
+.badge-agent {
+    background: var(--badge-agent);
     color: white;
 }
 
