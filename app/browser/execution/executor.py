@@ -6,6 +6,8 @@ from app.browser.execution.errors import ExecutionTimeoutError, RetryableBrowser
 from app.browser.execution.models import BrowserJob, BrowserJobResult
 from app.browser.execution.runtime import WorkerBrowserRuntime
 from app.browser.registry import registry as browser_registry
+from app.browser.recon import FailureCategory, classify_failure
+from app.browser.recon.manager import attempt_recon_recovery
 from app.browser.telemetry import browser_telemetry
 from app.core.config import settings
 from app.core.errors import BrowserError, InternalError
@@ -41,6 +43,19 @@ class BrowserProviderExecutor:
         if any(marker in message for marker in transient_markers):
             return True, "transient_browser_failure"
         return False, "provider_browser_failure"
+
+    async def _replay_provider_actions(
+        self,
+        provider,
+        message: str,
+        timeout: int,
+    ) -> str:
+        """Replay the core provider actions after recon recovery.
+
+        This re-runs send_message + wait_for_response on the same page.
+        """
+        await provider.send_message(message)
+        return await provider.wait_for_response(timeout=timeout)
 
     async def execute(self, job: BrowserJob) -> BrowserJobResult:
         request = job.request
@@ -166,6 +181,73 @@ class BrowserProviderExecutor:
                         model=request.canonical_model_id,
                     )
                     continue
+
+                # ── Auto-recon recovery for recon-eligible failures ──
+                if "provider" in locals() and not retryable:
+                    recon_category, recon_reason = classify_failure(
+                        error_type=type(exc).__name__,
+                        error_message=exc.message,
+                        details=exc.details,
+                    )
+
+                    if recon_category == FailureCategory.RECON_ELIGIBLE:
+                        logger.info(
+                            "Triggering auto-recon recovery",
+                            provider_id=provider_class.provider_id,
+                            error_type=type(exc).__name__,
+                            reason=recon_reason,
+                        )
+                        recon_result = await attempt_recon_recovery(
+                            provider=provider,
+                            page=provider.page,
+                            request_id=request.request_id,
+                            failed_action="browser_execution",
+                            failed_error_type=type(exc).__name__,
+                            failed_error_message=exc.message,
+                            replay_fn=self._replay_provider_actions,
+                            replay_args=(provider, request.message, request.execution_timeout_seconds),
+                        )
+
+                        if recon_result.recovered and recon_result.replay_succeeded:
+                            logger.info(
+                                "Auto-recon recovery succeeded",
+                                provider_id=provider_class.provider_id,
+                                actions=recon_result.actions_performed,
+                                duration_ms=recon_result.duration_ms,
+                            )
+                            # Re-run the full flow after successful recon
+                            try:
+                                content = await provider.wait_for_response(
+                                    timeout=request.execution_timeout_seconds
+                                )
+                                finished_at = time.monotonic()
+                                browser_telemetry.end_request(provider_class.provider_id, request_start)
+                                return BrowserJobResult(
+                                    content=content,
+                                    started_at=started_at,
+                                    finished_at=finished_at,
+                                    queue_wait_seconds=started_at - job.enqueued_at,
+                                    execution_seconds=finished_at - started_at,
+                                    retry_count=attempt,
+                                )
+                            except Exception:
+                                pass  # Recon helped but response still failed — fall through
+
+                        logger.warning(
+                            "Auto-recon recovery did not fully succeed",
+                            provider_id=provider_class.provider_id,
+                            recovered=recon_result.recovered,
+                            replay_succeeded=recon_result.replay_succeeded,
+                            reason=recon_result.reason,
+                            duration_ms=recon_result.duration_ms,
+                        )
+                    else:
+                        logger.debug(
+                            "Skipping recon: not recon-eligible",
+                            provider_id=provider_class.provider_id,
+                            category=recon_category.value,
+                            reason=recon_reason,
+                        )
 
                 logger.warning(
                     "Browser task failed",

@@ -1161,3 +1161,187 @@ async def healing_health_summary(provider_id: str = "", _=Depends(require_admin)
         "broken": broken,
         "all": [s.to_dict() for s in scores],
     }
+
+
+# ── Recon Diagnostics ──
+
+
+@router.get("/recon/stats")
+async def recon_stats(provider_id: str = "", _=Depends(require_admin)):
+    """Get recon recovery statistics."""
+    from app.browser.recon.telemetry import recon_telemetry
+
+    pid = provider_id if provider_id else None
+    return recon_telemetry.get_stats(provider_id=pid)
+
+
+@router.get("/recon/snapshot")
+async def recon_snapshot(_=Depends(require_admin)):
+    """Get full recon telemetry snapshot."""
+    from app.browser.recon.telemetry import recon_telemetry
+
+    return recon_telemetry.snapshot()
+
+
+@router.get("/recon/events")
+async def recon_events(limit: int = 20, _=Depends(require_admin)):
+    """Get recent recon events."""
+    from app.browser.recon.telemetry import recon_telemetry
+
+    return recon_telemetry.get_recent_events(limit)
+
+
+@router.post("/recon/clear")
+async def recon_clear(_=Depends(require_admin)):
+    """Clear recon telemetry data."""
+    from app.browser.recon.telemetry import recon_telemetry
+
+    recon_telemetry.clear()
+    return SuccessResponse(message="Recon telemetry cleared")
+
+
+@router.post("/recon/run/{provider_id}")
+async def recon_manual_run(provider_id: str, _=Depends(require_admin)):
+    """Manual recon trigger for diagnostics.
+
+    Runs a controlled recon/health probe against the specified provider
+    without an actual user request. Useful for diagnostics after UI changes.
+    """
+    import asyncio
+
+    from app.browser.registry import registry as browser_registry
+    from app.browser.recon.manager import ReconManager, ReconResult
+
+    if provider_id not in browser_registry._providers:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Provider not found: {provider_id}"},
+        )
+
+    # This is a diagnostic-only tool — we can't run recon without a real page.
+    # Instead, return the current policy + stats for this provider.
+    from app.browser.recon.policy import recon_policy
+    from app.browser.recon.telemetry import recon_telemetry
+
+    stats = recon_telemetry.get_stats(provider_id=provider_id)
+    policy = recon_policy.to_dict()
+
+    return {
+        "provider_id": provider_id,
+        "note": "Manual recon requires a live browser page — returning current policy and stats instead",
+        "policy": policy,
+        "current_stats": stats,
+        "health_aggregator": _get_provider_health_summary(provider_id),
+    }
+
+
+# ── DOM Baseline / Diff Diagnostics ──
+
+
+@router.get("/dom-baseline/providers")
+async def dom_baseline_providers(_=Depends(require_admin)):
+    """List providers that have DOM baselines captured."""
+    from app.browser.dom import baseline_store
+
+    baselines = baseline_store.get_baselines()
+    by_provider: dict[str, list[str]] = {}
+    for b in baselines:
+        if b.provider_id not in by_provider:
+            by_provider[b.provider_id] = []
+        by_provider[b.provider_id].append(b.role)
+
+    return {
+        "providers": by_provider,
+        "total_baselines": len(baselines),
+        "summary": baseline_store.summary(),
+    }
+
+
+@router.get("/dom-baseline/{provider_id}")
+async def dom_baseline_provider(provider_id: str, role: str = "", _=Depends(require_admin)):
+    """Get DOM baselines for a specific provider."""
+    from app.browser.dom import baseline_store
+
+    baselines = baseline_store.get_baselines(provider_id)
+    if role:
+        baselines = [b for b in baselines if b.role == role]
+
+    return {
+        "provider_id": provider_id,
+        "baselines": [b.to_dict() for b in baselines],
+    }
+
+
+@router.get("/dom-diff/recent")
+async def dom_diff_recent(limit: int = 20, _=Depends(require_admin)):
+    """Get recent DOM drift events."""
+    from app.browser.dom import baseline_store
+
+    events = baseline_store.get_drift_events(limit=limit)
+    return {
+        "total_events": len(events),
+        "events": [e.to_dict() for e in events],
+    }
+
+
+@router.post("/dom-baseline/clear/{provider_id}")
+async def dom_baseline_clear(
+    provider_id: str,
+    role: str = "",
+    _=Depends(require_admin),
+):
+    """Clear DOM baseline(s) for a provider."""
+    from app.browser.dom import baseline_store
+
+    removed = baseline_store.clear_baseline(provider_id, role if role else None)
+    return SuccessResponse(
+        message=f"Cleared {removed} baseline(s) for {provider_id}"
+        + (f" role={role}" if role else "")
+    )
+
+
+@router.post("/dom-baseline/clear/all")
+async def dom_baseline_clear_all(_=Depends(require_admin)):
+    """Clear ALL DOM baselines and drift events."""
+    from app.browser.dom import baseline_store
+    from app.browser.dom.telemetry import dom_drift_telemetry
+
+    baseline_store.clear_all()
+    dom_drift_telemetry.clear()
+    return SuccessResponse(message="All DOM baselines and drift events cleared")
+
+
+@router.get("/dom-drift/stats")
+async def dom_drift_stats(provider_id: str = "", _=Depends(require_admin)):
+    """Get DOM drift statistics."""
+    from app.browser.dom.telemetry import dom_drift_telemetry
+
+    pid = provider_id if provider_id else None
+    return {
+        "snapshot": dom_drift_telemetry.snapshot(),
+        "per_provider": dom_drift_telemetry.get_stats(pid),
+        "recent_events": dom_drift_telemetry.get_recent_drift_events(),
+    }
+
+
+def _get_provider_health_summary(provider_id: str) -> dict:
+    """Get health summary for a provider."""
+    try:
+        from app.browser.healing.health import health_aggregator
+
+        scores = health_aggregator.get_all(provider_id)
+        return {
+            "roles": [
+                {
+                    "role": s.role,
+                    "health_score": s.health_score,
+                    "status": s.status,
+                    "recon_pressure": s.recon_pressure_score,
+                    "recovered_recently": s.recovered_recently,
+                }
+                for s in scores
+            ],
+            "degradation": health_aggregator.get_provider_degradation(provider_id),
+        }
+    except Exception:
+        return {}

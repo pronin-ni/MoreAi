@@ -665,6 +665,10 @@
             loadCanary();
         } else if (tabName === 'Healing') {
             loadHealing();
+        } else if (tabName === 'Recon') {
+            loadRecon();
+        } else if (tabName === 'Baseline') {
+            loadBaseline();
         }
     }
 
@@ -885,6 +889,126 @@
         }
     }
 
+    // ── Recon ──
+    async function loadRecon() {
+        try {
+            const resp = await fetchApi('/admin/recon/snapshot');
+            const data = await resp.json();
+
+            document.getElementById('recon-attempts').textContent = data.total_attempts || '—';
+            document.getElementById('recon-successes').textContent = data.total_successes || '—';
+            document.getElementById('recon-partials').textContent = data.total_partials || '—';
+            document.getElementById('recon-failures').textContent = data.total_failures || '—';
+            document.getElementById('recon-success-rate').textContent = data.overall_success_rate ? (data.overall_success_rate * 100).toFixed(0) + '%' : '—';
+
+            // Per-provider table
+            const tbody = document.getElementById('recon-provider-tbody');
+            if (data.per_provider && data.per_provider.length > 0) {
+                tbody.innerHTML = data.per_provider.map(p => {
+                    const rateColor = p.success_rate > 0.7 ? '#4ade80' : p.success_rate > 0.4 ? '#fbbf24' : '#f87171';
+                    const lastResult = p.last_recovery_recovered ? '✅ recovered' : p.last_recovery_reason ? '⚠️ ' + p.last_recovery_reason.substring(0, 30) : '—';
+                    return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.4rem;">${p.provider_id}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${p.attempts}</td>
+                        <td style="padding: 0.4rem; text-align: center; color: ${rateColor};">${(p.success_rate * 100).toFixed(0)}%</td>
+                        <td style="padding: 0.4rem; text-align: center;">${p.partials}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${p.failures}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${p.avg_duration_ms.toFixed(0)}ms</td>
+                        <td style="padding: 0.4rem; text-align: center; font-size: 0.7rem;">${lastResult}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="7" style="padding: 1rem; text-align: center;">No recon events yet</td></tr>';
+            }
+        } catch (e) {
+            console.error('Failed to load recon snapshot:', e);
+            document.getElementById('recon-provider-tbody').innerHTML = `<tr><td colspan="7" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${e.message}</td></tr>`;
+        }
+
+        // Recent events
+        try {
+            const resp = await fetchApi('/admin/recon/events');
+            const events = await resp.json();
+            const tbody = document.getElementById('recon-events-tbody');
+            if (events && events.length > 0) {
+                tbody.innerHTML = events.slice(-15).reverse().map(e => {
+                    const resultColor = e.result === 'success' ? '#4ade80' : e.result === 'partial' ? '#fbbf24' : '#f87171';
+                    const resultLabel = e.result === 'success' ? '✅' : e.result === 'partial' ? '⚠️ partial' : '❌ failed';
+                    const replayLabel = e.replay_succeeded ? '✅' : e.replay_succeeded === false ? '❌' : '—';
+                    const reason = e.reason || e.trigger_reason || e.blocking_state || '';
+                    return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.3rem;">${e.provider_id}</td>
+                        <td style="padding: 0.3rem; font-size: 0.7rem;">${e.action}</td>
+                        <td style="padding: 0.3rem; text-align: center; color: ${resultColor};">${resultLabel}</td>
+                        <td style="padding: 0.3rem; text-align: center;">${e.duration_ms ? e.duration_ms.toFixed(0) + 'ms' : '—'}</td>
+                        <td style="padding: 0.3rem; text-align: center;">${replayLabel}</td>
+                        <td style="padding: 0.3rem; font-size: 0.7rem;">${reason.substring(0, 50)}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="6" style="padding: 1rem; text-align: center;">No recent events</td></tr>';
+            }
+        } catch (e) {
+            console.error('Failed to load recon events:', e);
+        }
+    }
+
+    // ── DOM Baseline ──
+    async function loadBaseline() {
+        try {
+            const resp = await fetchApi('/admin/dom-baseline/providers');
+            const data = await resp.json();
+
+            document.getElementById('baseline-total').textContent = data.total_baselines || '—';
+            document.getElementById('baseline-providers').textContent = Object.keys(data.providers || {}).length || '—';
+
+            // Coverage table
+            const covTbody = document.getElementById('baseline-coverage-tbody');
+            if (data.providers && Object.keys(data.providers).length > 0) {
+                covTbody.innerHTML = Object.entries(data.providers).map(([pid, roles]) =>
+                    `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.4rem;">${pid}</td>
+                        <td style="padding: 0.4rem;">${roles.map(r => `<span style="background: var(--admin-surface-2); padding: 0.1rem 0.3rem; border-radius: 2px; font-size: 0.7rem;">${r}</span>`).join(' ')}</td>
+                    </tr>`
+                ).join('');
+            } else {
+                covTbody.innerHTML = '<tr><td colspan="2" style="padding: 1rem; text-align: center;">No baselines captured yet</td></tr>';
+            }
+        } catch (e) {
+            console.error('Failed to load baseline coverage:', e);
+            document.getElementById('baseline-coverage-tbody').innerHTML = `<tr><td colspan="2" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${e.message}</td></tr>`;
+        }
+
+        // Drift events
+        try {
+            const resp = await fetchApi('/admin/dom-diff/recent');
+            const data = await resp.json();
+            document.getElementById('drift-total').textContent = data.total_events || '—';
+
+            const highCount = (data.events || []).filter(e => e.diff_result && e.diff_result.drift_severity === 'high').length;
+            document.getElementById('drift-high').textContent = highCount || '—';
+
+            const tbody = document.getElementById('drift-events-tbody');
+            if (data.events && data.events.length > 0) {
+                tbody.innerHTML = data.events.slice(-15).reverse().map(e => {
+                    const sev = e.diff_result ? e.diff_result.drift_severity : 'none';
+                    const sevColor = sev === 'high' ? '#f87171' : sev === 'medium' ? '#fbbf24' : sev === 'low' ? '#60a5fa' : '#4ade80';
+                    const summary = e.diff_result ? e.diff_result.human_summary : '';
+                    return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.3rem;">${e.provider_id}</td>
+                        <td style="padding: 0.3rem;">${e.role}</td>
+                        <td style="padding: 0.3rem; text-align: center; color: ${sevColor};">${sev}</td>
+                        <td style="padding: 0.3rem; font-size: 0.7rem;">${summary.substring(0, 60)}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="4" style="padding: 1rem; text-align: center;">No drift events</td></tr>';
+            }
+        } catch (e) {
+            console.error('Failed to load drift events:', e);
+        }
+    }
+
     // ── Start ──
     init();
 
@@ -893,9 +1017,33 @@
         const sandboxRunBtn = document.getElementById('sandbox-run-btn');
         const compareRunBtn = document.getElementById('compare-run-btn');
         const canaryRegisterBtn = document.getElementById('canary-register-btn');
+        const reconRefreshBtn = document.getElementById('recon-refresh-btn');
+        const reconClearBtn = document.getElementById('recon-clear-btn');
+        const baselineRefreshBtn = document.getElementById('baseline-refresh-btn');
+        const baselineClearBtn = document.getElementById('baseline-clear-btn');
 
         if (sandboxRunBtn) sandboxRunBtn.addEventListener('click', runSandboxPrompt);
         if (compareRunBtn) compareRunBtn.addEventListener('click', runCompare);
         if (canaryRegisterBtn) canaryRegisterBtn.addEventListener('click', registerCanary);
+        if (reconRefreshBtn) reconRefreshBtn.addEventListener('click', loadRecon);
+        if (reconClearBtn) reconClearBtn.addEventListener('click', async () => {
+            if (!confirm('Clear all recon telemetry data?')) return;
+            try {
+                await fetchApi('/admin/recon/clear', { method: 'POST' });
+                loadRecon();
+            } catch (e) {
+                alert(`Failed to clear recon data: ${e.message}`);
+            }
+        });
+        if (baselineRefreshBtn) baselineRefreshBtn.addEventListener('click', loadBaseline);
+        if (baselineClearBtn) baselineClearBtn.addEventListener('click', async () => {
+            if (!confirm('Clear ALL DOM baselines?')) return;
+            try {
+                await fetchApi('/admin/dom-baseline/clear/all', { method: 'POST' });
+                loadBaseline();
+            } catch (e) {
+                alert(`Failed to clear baselines: ${e.message}`);
+            }
+        });
     });
 })();

@@ -52,6 +52,8 @@
                 <button class="nav-tab" data-tab="Analytics">Analytics</button>
                 <button class="nav-tab" data-tab="Canary">Canary</button>
                 <button class="nav-tab" data-tab="Healing">Healing</button>
+                <button class="nav-tab" data-tab="Recon">Recon</button>
+                <button class="nav-tab" data-tab="Baseline">Baseline</button>
                 <button class="nav-tab" data-tab="Config">Config</button>
             </nav>
             <div class="header-actions">
@@ -437,6 +439,153 @@
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Recent Healing Candidates</h3>
                     <pre id="healing-candidates" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Recon Tab -->
+            <div id="tab-Recon" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="recon-attempts">—</div>
+                        <div class="stat-label">Total Attempts</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-success);">
+                        <div class="stat-value" id="recon-successes">—</div>
+                        <div class="stat-label">Successes</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-warning);">
+                        <div class="stat-value" id="recon-partials">—</div>
+                        <div class="stat-label">Partials</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="recon-failures">—</div>
+                        <div class="stat-label">Failures</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="recon-success-rate">—</div>
+                        <div class="stat-label">Success Rate</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="recon-avg-duration">—</div>
+                        <div class="stat-label">Avg Duration (ms)</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Per-Provider Recon Stats</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="recon-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Attempts</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Success Rate</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Partials</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Failures</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Avg Duration</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Last Result</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recon-provider-tbody">
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Recon Events</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="recon-events-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Trigger</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Result</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Replay</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Reason/Blocking</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recon-events-tbody">
+                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Quick Actions</h3>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button id="recon-refresh-btn" class="btn-secondary">↻ Refresh Data</button>
+                        <button id="recon-clear-btn" class="btn-secondary" style="border-color: var(--admin-error); color: var(--admin-error);">Clear Recon Telemetry</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DOM Baseline Tab -->
+            <div id="tab-Baseline" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="baseline-total">—</div>
+                        <div class="stat-label">Total Baselines</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="baseline-providers">—</div>
+                        <div class="stat-label">Providers Covered</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-warning);">
+                        <div class="stat-value" id="drift-total">—</div>
+                        <div class="stat-label">Drift Events</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="drift-high">—</div>
+                        <div class="stat-label">High Severity</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Baseline Coverage</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="baseline-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Roles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="baseline-coverage-tbody">
+                                <tr><td colspan="2" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Drift Events</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="drift-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Severity</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Summary</th>
+                                </tr>
+                            </thead>
+                            <tbody id="drift-events-tbody">
+                                <tr><td colspan="4" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Quick Actions</h3>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button id="baseline-refresh-btn" class="btn-secondary">↻ Refresh</button>
+                        <button id="baseline-clear-btn" class="btn-secondary" style="border-color: var(--admin-error); color: var(--admin-error);">Clear All Baselines</button>
+                    </div>
                 </div>
             </div>
         </main>

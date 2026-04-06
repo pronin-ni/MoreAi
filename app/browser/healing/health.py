@@ -36,6 +36,11 @@ class SelectorHealthScore:
     worst_confidence: float = 1.0
     last_updated: float = 0.0
 
+    # Recon pressure indicators
+    recon_attempts: int = 0
+    recon_successes: int = 0
+    recon_failures: int = 0
+
     @property
     def primary_success_rate(self) -> float:
         if self.primary_attempts == 0:
@@ -71,20 +76,40 @@ class SelectorHealthScore:
         return failures / total
 
     @property
+    def recon_pressure_score(self) -> float:
+        """How much recon stress this provider+role is under.
+
+        0.0 = no recon activity, 1.0 = heavy recon pressure.
+        Based on: recon attempts vs successes, failure rate.
+        """
+        if self.recon_attempts == 0:
+            return 0.0
+        failure_ratio = self.recon_failures / self.recon_attempts
+        # High pressure = many attempts with many failures
+        return min((failure_ratio * 0.6) + (min(self.recon_attempts / 10, 1.0) * 0.4), 1.0)
+
+    @property
+    def recovered_recently(self) -> bool:
+        """True if recon recently succeeded."""
+        return self.recon_successes > 0 and self.recon_successes >= self.recon_failures
+
+    @property
     def health_score(self) -> float:
         """Composite health score 0.0–1.0.
 
         Formula:
-        - 50% weight: primary_success_rate (main signal)
-        - 20% weight: (1 - healing_usage_rate) (less healing = better)
+        - 40% weight: primary_success_rate (main signal)
+        - 15% weight: (1 - healing_usage_rate) (less healing = better)
         - 15% weight: healing_success_rate (if healing used, is it reliable?)
         - 15% weight: avg_confidence (quality of recovered elements)
+        - 15% weight: (1 - recon_pressure_score) (less recon stress = better)
         """
-        w1 = self.primary_success_rate * 0.50
-        w2 = (1.0 - min(self.healing_usage_rate, 1.0)) * 0.20
+        w1 = self.primary_success_rate * 0.40
+        w2 = (1.0 - min(self.healing_usage_rate, 1.0)) * 0.15
         w3 = self.healing_success_rate * 0.15 if self.healing_invoked > 0 else 0.15
         w4 = self.avg_confidence * 0.15 if self.avg_confidence > 0 else 0.15
-        return round(min(w1 + w2 + w3 + w4, 1.0), 3)
+        w5 = (1.0 - self.recon_pressure_score) * 0.15
+        return round(min(w1 + w2 + w3 + w4 + w5, 1.0), 3)
 
     @property
     def status(self) -> str:
@@ -114,6 +139,12 @@ class SelectorHealthScore:
             "best_confidence": self.best_confidence,
             "worst_confidence": self.worst_confidence,
             "total_duration_ms": round(self.total_duration_ms, 1),
+            # Recon pressure indicators
+            "recon_attempts": self.recon_attempts,
+            "recon_successes": self.recon_successes,
+            "recon_failures": self.recon_failures,
+            "recon_pressure_score": round(self.recon_pressure_score, 3),
+            "recovered_recently": self.recovered_recently,
             "last_updated": round(self.last_updated, 1),
         }
 
@@ -145,6 +176,42 @@ class HealthAggregator:
 
         s = self._scores[key]
         s = self._apply_updates(s, primary_success, fallback_success, healing_success, confidence, duration_ms)
+        self._scores[key] = s
+
+    def record_recon(
+        self,
+        provider_id: str,
+        *,
+        success: bool,
+        duration_ms: float = 0.0,
+    ) -> None:
+        """Record a recon event for provider health tracking."""
+        key = (provider_id, "recon")
+        if key not in self._scores:
+            self._scores[key] = SelectorHealthScore(
+                provider_id=provider_id,
+                role="recon",
+                last_updated=time.monotonic(),
+            )
+        s = self._scores[key]
+        s = SelectorHealthScore(
+            provider_id=s.provider_id,
+            role=s.role,
+            primary_attempts=s.primary_attempts,
+            primary_successes=s.primary_successes,
+            fallback_attempts=s.fallback_attempts,
+            fallback_successes=s.fallback_successes,
+            healing_invoked=s.healing_invoked,
+            healing_successes=s.healing_successes,
+            total_duration_ms=s.total_duration_ms + duration_ms,
+            avg_confidence=s.avg_confidence,
+            best_confidence=s.best_confidence,
+            worst_confidence=s.worst_confidence,
+            last_updated=time.monotonic(),
+            recon_attempts=s.recon_attempts + 1,
+            recon_successes=s.recon_successes + (1 if success else 0),
+            recon_failures=s.recon_failures + (0 if success else 1),
+        )
         self._scores[key] = s
 
     def get(self, provider_id: str, role: str) -> SelectorHealthScore | None:

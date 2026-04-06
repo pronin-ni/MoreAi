@@ -17,6 +17,10 @@ import time
 from playwright.async_api import Locator, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
+from app.browser.dom import baseline_store, dom_drift_telemetry
+from app.browser.dom.baseline import DOMBaseline
+from app.browser.dom.diff import diff_against_baseline
+from app.browser.dom.store import DriftRecord
 from app.browser.healing.element_verifier import ElementVerifier
 from app.browser.healing.healing_engine import HealingEngine
 from app.browser.healing.health import health_aggregator
@@ -169,6 +173,8 @@ class LocatorResolver:
                     role=role,
                     elapsed_ms=round(elapsed, 1),
                 )
+                # Capture baseline on primary success
+                await self._maybe_capture_baseline(result, role, "primary_success")
                 return result
             healing_telemetry.record_primary(self.provider_id, role, False)
             health_aggregator.update(self.provider_id, role, primary_success=False)
@@ -189,6 +195,8 @@ class LocatorResolver:
                     role=role,
                     elapsed_ms=round(elapsed, 1),
                 )
+                # Capture baseline on fallback success
+                await self._maybe_capture_baseline(result, role, "fallback_success")
                 return result
             healing_telemetry.record_fallback(self.provider_id, role, False)
             health_aggregator.update(self.provider_id, role, fallback_success=False)
@@ -392,6 +400,12 @@ class LocatorResolver:
                     # Track for promotion
                     self._track_promotion(profile.role, candidate.selector_used)
 
+                    # Capture baseline on healing success
+                    await self._maybe_capture_baseline(
+                        verification.locator, profile.role, "healing_success",
+                        confidence=verification.confidence,
+                    )
+
                     return verification.locator
 
                 # Track best attempt
@@ -423,6 +437,71 @@ class LocatorResolver:
             f"below threshold {profile.min_confidence:.3f} "
             f"for role '{profile.role}' on provider '{self.provider_id}'"
         )
+
+    async def _maybe_capture_baseline(
+        self,
+        locator: Locator,
+        role: str,
+        reason: str,
+        *,
+        confidence: float = 0.0,
+    ) -> None:
+        """Capture DOM baseline if no baseline exists or if confidence is high.
+
+        This is called after successful resolution (primary, fallback, healing).
+        Baseline is captured only if:
+        - No baseline exists yet, or
+        - Confidence is high (>= 0.85) — indicates strong match
+        """
+        existing = baseline_store.get_baseline(self.provider_id, role)
+        is_update = existing is not None
+
+        # Only capture if no baseline exists OR confidence is very high
+        if existing and confidence < 0.85:
+            return
+
+        try:
+            baseline = await DOMBaseline.from_locator(
+                locator=locator,
+                provider_id=self.provider_id,
+                role=role,
+                selector=await locator.evaluate("el => { const s = el.tagName.toLowerCase(); const id = el.id ? '#' + el.id : ''; const cls = el.className ? '.' + el.className.split(' ')[0] : ''; return s + id + cls; }"),
+                capture_reason=reason,
+                confidence=confidence,
+                version=existing.version + 1 if existing else 1,
+            )
+
+            if baseline_store.set_baseline(baseline, update_only_if_newer=True):
+                dom_drift_telemetry.record_baseline_capture(
+                    self.provider_id, role, is_update=is_update
+                )
+                dom_drift_telemetry.update_baseline_age(
+                    self.provider_id, baseline.captured_at
+                )
+
+                # If updating, check for drift against old baseline
+                if existing:
+                    diff_result = diff_against_baseline(existing, baseline)
+                    if diff_result.has_drift:
+                        baseline_store.record_drift(DriftRecord(
+                            provider_id=self.provider_id,
+                            role=role,
+                            timestamp=time.monotonic(),
+                            diff_result=diff_result,
+                            trigger=f"baseline_update_{reason}",
+                        ))
+                        dom_drift_telemetry.record_drift(
+                            self.provider_id, role,
+                            severity=diff_result.drift_severity,
+                            reason=diff_result.human_summary,
+                        )
+        except Exception as exc:
+            logger.debug(
+                "Baseline capture failed",
+                provider_id=self.provider_id,
+                role=role,
+                error=str(exc),
+            )
 
     @staticmethod
     def _resolve_selector(container: Locator | Page, selector: str) -> Locator:
