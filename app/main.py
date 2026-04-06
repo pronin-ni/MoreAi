@@ -10,6 +10,7 @@ import app.browser.providers  # noqa: F401
 from app.admin.config_manager import config_manager
 from app.admin.observer import observer
 from app.admin.router import router as admin_router
+from app.api.rate_limit import RateLimitMiddleware
 from app.api.routes_openai import router as openai_router
 from app.api.routes_ui import router as ui_router
 from app.browser.execution.dispatcher import browser_dispatcher
@@ -50,9 +51,19 @@ async def lifespan(app: FastAPI):
     # Start admin observer (background task for config change propagation)
     await observer.start()
 
+    # Start webhook dispatcher
+    from app.services.webhooks import webhook_dispatcher
+    await webhook_dispatcher.start()
+    logger.info("Webhook dispatcher started")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
+
+    # Stop webhook dispatcher
+    from app.services.webhooks import webhook_dispatcher
+    await webhook_dispatcher.stop()
+    logger.info("Webhook dispatcher stopped")
 
     # Stop admin observer
     await observer.stop()
@@ -81,6 +92,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Rate limiting middleware (must be after CORS)
+app.add_middleware(
+    RateLimitMiddleware,
+    enabled=True,
+    default_rpm=60,
+    default_burst=10,
 )
 
 

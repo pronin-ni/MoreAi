@@ -399,6 +399,12 @@ body {
     gap: var(--space-xs);
 }
 
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--space-sm);
+}
+
 .form-label {
     font-size: 0.8rem;
     font-weight: 400;

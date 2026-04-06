@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from app.browser.base import BrowserProvider
 
@@ -11,7 +10,7 @@ class ProviderRegistry:
     """Registry for browser automation providers."""
 
     def __init__(self):
-        self._providers: dict[str, type["BrowserProvider"]] = {}
+        self._providers: dict[str, type[BrowserProvider]] = {}
         self._canonical_models: dict[str, str] = {}
         self._aliases: dict[str, str] = {}
         self._provider_models: dict[str, str] = {}
@@ -19,7 +18,7 @@ class ProviderRegistry:
 
     def register(
         self,
-        provider_class: type["BrowserProvider"],
+        provider_class: type[BrowserProvider],
         canonical_model_id: str,
         alias_ids: list[str] | None = None,
         config: dict | None = None,
@@ -68,7 +67,7 @@ class ProviderRegistry:
     def available_model_names(self) -> list[str]:
         return sorted(list(self._canonical_models.keys()) + list(self._aliases.keys()))
 
-    def get_provider_class(self, model: str) -> type["BrowserProvider"]:
+    def get_provider_class(self, model: str) -> type[BrowserProvider]:
         provider_id = self._canonical_models[self.resolve_model(model)]
 
         provider_class = self._providers.get(provider_id)

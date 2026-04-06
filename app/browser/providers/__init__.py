@@ -1,9 +1,9 @@
-from app.browser.providers.glm import GlmProvider
-from app.browser.providers.qwen import QwenProvider
 from app.browser.providers.chatgpt import ChatGPTProvider
-from app.browser.providers.yandex import YandexProvider
-from app.browser.providers.kimi import KimiProvider
 from app.browser.providers.deepseek import DeepseekProvider
+from app.browser.providers.glm import GlmProvider
+from app.browser.providers.kimi import KimiProvider
+from app.browser.providers.qwen import QwenProvider
+from app.browser.providers.yandex import YandexProvider
 from app.browser.registry import registry
 from app.core.config import settings
 

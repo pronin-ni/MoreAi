@@ -146,7 +146,10 @@ class RoutingEngine:
         # Step 4: Build ordered chain
         chain = self._build_chain(filtered_candidates, overrides, trace)
 
-        # Step 5: Build policy
+        # Step 5: Inject canary candidates if applicable
+        chain = self._inject_canary_candidates(requested_model, chain, trace)
+
+        # Step 6: Build policy
         policy = self._build_policy(overrides)
 
         if not chain:
@@ -289,7 +292,6 @@ class RoutingEngine:
     ) -> list[CandidateProvider]:
         """Filter candidates by overrides (enabled, visibility, force_provider)."""
         filtered = []
-        model_override = overrides.get("model")
 
         for c in candidates:
             # Skip hidden models
@@ -313,6 +315,13 @@ class RoutingEngine:
                     trace.append(f"Excluded {c.transport}/{c.provider_id}: circuit breaker open")
                     continue
 
+            # Log selector degradation signal (hint, not exclusion)
+            if self._is_provider_degraded(c.provider_id):
+                trace.append(
+                    f"WARNING {c.transport}/{c.provider_id}: selector health degraded "
+                    f"(healing usage high or health score low)"
+                )
+
             filtered.append(c)
 
         trace.append(f"{len(filtered)} candidates remain after override filtering")
@@ -331,6 +340,121 @@ class RoutingEngine:
         except Exception:
             pass
         return False
+
+    def _is_provider_degraded(self, provider_id: str) -> bool:
+        """Check if a provider's selector health indicates degradation.
+
+        A provider is considered degraded if:
+        - Any selector role has health_score < 0.5 (broken), or
+        - Healing usage rate > 50% (relying heavily on healing)
+        """
+        try:
+            from app.browser.healing.health import health_aggregator
+
+            scores = health_aggregator.get_all(provider_id)
+            for s in scores:
+                if s.health_score < 0.5:
+                    return True
+                if s.healing_usage_rate > 0.5 and s.healing_invoked > 3:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _sort_by_health(
+        self, candidates: list[CandidateProvider], trace: list[str]
+    ) -> list[CandidateProvider]:
+        """Sort candidates by selector health score (healthier first).
+
+        This is a soft signal — it doesn't exclude candidates, just reorders them.
+        If health data is unavailable, preserves original order.
+        """
+        try:
+            from app.browser.healing.health import health_aggregator
+
+            def health_key(c: CandidateProvider) -> float:
+                scores = health_aggregator.get_all(c.provider_id)
+                if not scores:
+                    return 1.0  # No data = assume healthy
+                return min(s.health_score for s in scores)
+
+            return sorted(candidates, key=health_key, reverse=True)
+        except Exception:
+            return candidates
+
+    # ── Internal: canary injection ──
+
+    def _inject_canary_candidates(
+        self,
+        requested_model: str,
+        chain: list[CandidateProvider],
+        trace: list[str],
+    ) -> list[CandidateProvider]:
+        """Inject canary providers into the routing chain.
+
+        If a canary is active for this model and the request should receive
+        canary traffic, the canary provider is added to the chain.
+        """
+        try:
+            from app.services.canary import canary_registry
+
+            active_canaries = canary_registry.list_active()
+            if not active_canaries:
+                return chain
+
+            for canary in active_canaries:
+                # Check if this canary applies to the requested model
+                if canary.model_id != requested_model:
+                    continue
+
+                # Check traffic assignment
+                request_key = f"{requested_model}_{id(chain)}"
+                if not canary.should_receive_traffic(request_key):
+                    trace.append(f"Canary {canary.model_id}: traffic not assigned ({canary.traffic_percentage}%)")
+                    continue
+
+                # Create canary candidate
+                canary_candidate = CandidateProvider(
+                    provider_id=canary.provider_id,
+                    transport=self._resolve_transport(canary.provider_id),
+                    canonical_model_id=canary.model_id,
+                    enabled=True,
+                    available=True,
+                    visibility="experimental",
+                    reason=f"canary ({canary.traffic_percentage}% traffic)",
+                )
+
+                # Insert as second in chain (after primary)
+                if chain:
+                    chain.insert(1, canary_candidate)
+                    trace.append(
+                        f"Injected canary {canary.provider_id} into chain "
+                        f"(status={canary.status.value}, traffic={canary.traffic_percentage}%)"
+                    )
+                else:
+                    chain.append(canary_candidate)
+                    trace.append(
+                        f"Added canary {canary.provider_id} as sole provider"
+                    )
+        except Exception as exc:
+            trace.append(f"Canary injection failed: {exc}")
+
+        return chain
+
+    @staticmethod
+    def _resolve_transport(provider_id: str) -> str:
+        """Determine transport for a provider ID."""
+        try:
+            from app.browser.registry import registry as browser_registry
+            from app.integrations.registry import api_registry
+
+            if provider_id in browser_registry._providers:
+                return "browser"
+            if provider_id in api_registry._adapters:
+                return "api"
+        except Exception:
+            pass
+        return "browser"  # default
 
     # ── Internal: chain building ──
 
@@ -381,13 +505,22 @@ class RoutingEngine:
                 trace.append(f"primary={primary} not found among candidates")
 
         # 3. Add remaining candidates as default (in order: same transport first, then others)
-        # Same transport candidates first
+        # Same transport candidates first, then health-score sorted within each group
         if chain:
             primary_transport = chain[0].transport
         else:
             primary_transport = candidates[0].transport if candidates else None
 
-        for c in candidates:
+        # Separate remaining candidates by transport
+        remaining = [c for c in candidates if c.provider_id not in used_providers]
+        same_transport = [c for c in remaining if c.transport == primary_transport]
+        other_transport = [c for c in remaining if c.transport != primary_transport]
+
+        # Sort each group by health score (higher = healthier = first)
+        same_transport = self._sort_by_health(same_transport, trace)
+        other_transport = self._sort_by_health(other_transport, trace)
+
+        for c in same_transport + other_transport:
             if c.provider_id in used_providers:
                 continue
             c.is_selected = True

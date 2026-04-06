@@ -657,6 +657,14 @@
             loadActions();
         } else if (tabName === 'Config') {
             loadEffectiveConfig();
+        } else if (tabName === 'Sandbox') {
+            loadSandboxModels();
+        } else if (tabName === 'Analytics') {
+            loadAnalytics();
+        } else if (tabName === 'Canary') {
+            loadCanary();
+        } else if (tabName === 'Healing') {
+            loadHealing();
         }
     }
 
@@ -665,6 +673,229 @@
         return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
     }
 
+    // ── Sandbox ──
+    async function loadSandboxModels() {
+        try {
+            const resp = await fetchApi('/admin/sandbox/models');
+            const models = await resp.json();
+            const select = document.getElementById('sandbox-model');
+            if (!select) return;
+            select.innerHTML = '';
+            models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = `${m.id} (${m.transport})`;
+                select.appendChild(opt);
+            });
+        } catch (e) {
+            console.error('Failed to load sandbox models:', e);
+        }
+    }
+
+    async function runSandboxPrompt() {
+        const modelId = document.getElementById('sandbox-model').value;
+        const prompt = document.getElementById('sandbox-prompt').value;
+        const maxTokens = parseInt(document.getElementById('sandbox-max-tokens').value) || 2048;
+        const temperature = parseFloat(document.getElementById('sandbox-temperature').value) || 0.7;
+        const resultDiv = document.getElementById('sandbox-result');
+        const btn = document.getElementById('sandbox-run-btn');
+
+        if (!prompt.trim()) { alert('Please enter a prompt'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+        resultDiv.classList.add('hidden');
+
+        try {
+            const resp = await fetchApi('/admin/sandbox/run', {
+                method: 'POST',
+                body: JSON.stringify({ prompt, model_id: modelId, max_tokens: maxTokens, temperature }),
+            });
+            const result = await resp.json();
+            resultDiv.textContent = JSON.stringify(result, null, 2);
+            resultDiv.classList.remove('hidden');
+        } catch (e) {
+            resultDiv.textContent = `Error: ${e.message}`;
+            resultDiv.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Run Prompt';
+        }
+    }
+
+    async function runCompare() {
+        const modelsInput = document.getElementById('compare-models').value;
+        const prompt = document.getElementById('compare-prompt').value;
+        const resultDiv = document.getElementById('compare-result');
+        const btn = document.getElementById('compare-run-btn');
+
+        const modelIds = modelsInput.split(',').map(s => s.trim()).filter(Boolean);
+        if (modelIds.length < 2) { alert('Please enter at least 2 models (comma-separated)'); return; }
+        if (!prompt.trim()) { alert('Please enter a prompt'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+        resultDiv.classList.add('hidden');
+
+        try {
+            const resp = await fetchApi('/admin/sandbox/compare', {
+                method: 'POST',
+                body: JSON.stringify({ prompt, model_ids: modelIds }),
+            });
+            const result = await resp.json();
+            resultDiv.textContent = JSON.stringify(result, null, 2);
+            resultDiv.classList.remove('hidden');
+        } catch (e) {
+            resultDiv.textContent = `Error: ${e.message}`;
+            resultDiv.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Run Comparison';
+        }
+    }
+
+    // ── Analytics ──
+    async function loadAnalytics() {
+        try {
+            const resp = await fetchApi('/admin/analytics/usage');
+            const data = await resp.json();
+
+            const totalRequests = (data.top_models || []).reduce((sum, m) => sum + (m.request_count || 0), 0);
+            const totalErrors = (data.top_models || []).reduce((sum, m) => sum + (m.error_count || 0), 0);
+            const errorRate = totalRequests > 0 ? ((totalErrors / totalRequests) * 100).toFixed(1) + '%' : '0%';
+
+            const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            set('analytics-total-requests', totalRequests || '—');
+            set('analytics-error-rate', errorRate);
+            set('analytics-fallbacks', (data.fallback_summary && data.fallback_summary.total_fallbacks) || '—');
+            set('analytics-models-count', (data.top_models || []).length || '—');
+
+            const setJson = (id, val, fallback) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = (val && val.length) ? JSON.stringify(val, null, 2) : fallback;
+            };
+            setJson('analytics-top-models', data.top_models, 'No data yet — make some requests first');
+            setJson('analytics-top-providers', data.top_providers, 'No data yet');
+            setJson('analytics-errors', data.error_summary, 'No errors');
+            setJson('analytics-fallbacks-detail', data.fallback_summary ? [data.fallback_summary] : null, 'No fallbacks');
+        } catch (e) {
+            console.error('Failed to load analytics:', e);
+            const el = document.getElementById('analytics-top-models');
+            if (el) el.textContent = `Error: ${e.message}`;
+        }
+    }
+
+    // ── Canary ──
+    async function loadCanary() {
+        try {
+            const resp1 = await fetchApi('/admin/canary/active');
+            const active = await resp1.json();
+            const el1 = document.getElementById('canary-active');
+            if (el1) el1.textContent = active.length ? JSON.stringify(active, null, 2) : 'No active canaries';
+
+            const resp2 = await fetchApi('/admin/canary/history');
+            const history = await resp2.json();
+            const el2 = document.getElementById('canary-history-list');
+            if (el2) el2.textContent = history.length ? JSON.stringify(history, null, 2) : 'No history';
+        } catch (e) {
+            console.error('Failed to load canary:', e);
+        }
+    }
+
+    async function registerCanary() {
+        const modelId = document.getElementById('canary-model-id').value;
+        const providerId = document.getElementById('canary-provider-id').value;
+        const status = document.getElementById('canary-status').value;
+        const traffic = parseFloat(document.getElementById('canary-traffic').value) || 10;
+        const errorThreshold = parseFloat(document.getElementById('canary-error-threshold').value) || 0.1;
+        const notes = document.getElementById('canary-notes').value;
+
+        if (!modelId || !providerId) { alert('Please fill in Model ID and Provider ID'); return; }
+
+        try {
+            const resp = await fetchApi('/admin/canary', {
+                method: 'POST',
+                body: JSON.stringify({
+                    model_id: modelId, provider_id: providerId, status,
+                    traffic_percentage: traffic, error_threshold: errorThreshold, notes,
+                }),
+            });
+            const result = await resp.json();
+            alert(`Canary registered: ${result.model_id} (${result.status})`);
+            loadCanary();
+        } catch (e) {
+            alert(`Failed to register canary: ${e.message}`);
+        }
+    }
+
+    // ── Healing ──
+    async function loadHealing() {
+        try {
+            const resp = await fetchApi('/admin/healing/health');
+            const data = await resp.json();
+
+            document.getElementById('healing-total').textContent = data.summary.total || '—';
+            document.getElementById('healing-healthy').textContent = data.summary.healthy || '—';
+            document.getElementById('healing-degrading').textContent = data.summary.degrading || '—';
+            document.getElementById('healing-broken').textContent = data.summary.broken || '—';
+
+            // Render health table
+            const tbody = document.getElementById('healing-health-tbody');
+            if (data.all && data.all.length > 0) {
+                tbody.innerHTML = data.all.map(h => {
+                    const statusColor = h.status === 'healthy' ? '#4ade80' : h.status === 'degrading' ? '#fbbf24' : '#f87171';
+                    return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.4rem;">${h.provider_id}</td>
+                        <td style="padding: 0.4rem;">${h.role}</td>
+                        <td style="padding: 0.4rem; text-align: center; font-weight: 500; color: ${statusColor};">${h.health_score.toFixed(2)}</td>
+                        <td style="padding: 0.4rem; text-align: center;"><span style="background: ${statusColor}22; color: ${statusColor}; padding: 0.15rem 0.5rem; border-radius: 3px;">${h.status}</span></td>
+                        <td style="padding: 0.4rem; text-align: center;">${h.primary_success_rate.toFixed(2)}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${h.fallback_success_rate.toFixed(2)}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${h.healing_usage_rate.toFixed(2)}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${h.avg_confidence.toFixed(2)}</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="8" style="padding: 1rem; text-align: center;">No data yet — make some requests first</td></tr>';
+            }
+        } catch (e) {
+            console.error('Failed to load healing health:', e);
+            const tbody = document.getElementById('healing-health-tbody');
+            if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${e.message}</td></tr>`;
+        }
+
+        // Load cache
+        try {
+            const resp = await fetchApi('/admin/healing/cache');
+            const cache = await resp.json();
+            document.getElementById('healing-cache').textContent =
+                cache.length ? JSON.stringify(cache, null, 2) : 'No cached entries';
+        } catch (e) {
+            document.getElementById('healing-cache').textContent = `Error: ${e.message}`;
+        }
+
+        // Load candidates
+        try {
+            const resp = await fetchApi('/admin/healing/candidates');
+            const candidates = await resp.json();
+            document.getElementById('healing-candidates').textContent =
+                candidates.length ? JSON.stringify(candidates, null, 2) : 'No recent candidates';
+        } catch (e) {
+            document.getElementById('healing-candidates').textContent = `Error: ${e.message}`;
+        }
+    }
+
     // ── Start ──
     init();
+
+    // ── Event listeners for new tabs ──
+    document.addEventListener('DOMContentLoaded', () => {
+        const sandboxRunBtn = document.getElementById('sandbox-run-btn');
+        const compareRunBtn = document.getElementById('compare-run-btn');
+        const canaryRegisterBtn = document.getElementById('canary-register-btn');
+
+        if (sandboxRunBtn) sandboxRunBtn.addEventListener('click', runSandboxPrompt);
+        if (compareRunBtn) compareRunBtn.addEventListener('click', runCompare);
+        if (canaryRegisterBtn) canaryRegisterBtn.addEventListener('click', registerCanary);
+    });
 })();

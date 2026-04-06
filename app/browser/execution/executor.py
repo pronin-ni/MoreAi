@@ -6,6 +6,7 @@ from app.browser.execution.errors import ExecutionTimeoutError, RetryableBrowser
 from app.browser.execution.models import BrowserJob, BrowserJobResult
 from app.browser.execution.runtime import WorkerBrowserRuntime
 from app.browser.registry import registry as browser_registry
+from app.browser.telemetry import browser_telemetry
 from app.core.config import settings
 from app.core.errors import BrowserError, InternalError
 from app.core.logging import get_logger
@@ -48,6 +49,7 @@ class BrowserProviderExecutor:
         last_error: BrowserError | None = None
         auth_state_invalidated = False
         started_at = time.monotonic()
+        request_start = browser_telemetry.start_request(provider_class.provider_id)
 
         for attempt in range(request.max_retries + 1):
             if job.is_cancelled():
@@ -75,6 +77,7 @@ class BrowserProviderExecutor:
                             timeout=request.execution_timeout_seconds
                         )
                         finished_at = time.monotonic()
+                        browser_telemetry.end_request(provider_class.provider_id, request_start)
                         return BrowserJobResult(
                             content=content,
                             started_at=started_at,
@@ -101,6 +104,9 @@ class BrowserProviderExecutor:
                 # Timeout is classified as retryable — retry within limits
                 retryable = True
                 failure_kind = "transient_browser_failure"
+                browser_telemetry.end_request(
+                    provider_class.provider_id, request_start, timed_out=True,
+                )
 
                 if attempt < request.max_retries:
                     job.retry_count += 1
@@ -152,6 +158,8 @@ class BrowserProviderExecutor:
                 ):
                     auth_bootstrapper.invalidate_model_storage_state(request.canonical_model_id)
                     auth_state_invalidated = True
+                    browser_telemetry.record_session_invalidation(provider_class.provider_id)
+                    browser_telemetry.record_login_wall(provider_class.provider_id)
                     logger.info(
                         "Invalidated provider auth state after login wall",
                         request_id=request.request_id,

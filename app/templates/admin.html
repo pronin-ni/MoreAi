@@ -48,6 +48,10 @@
                 <button class="nav-tab" data-tab="Models">Models</button>
                 <button class="nav-tab" data-tab="Health">Health</button>
                 <button class="nav-tab" data-tab="Actions">Actions</button>
+                <button class="nav-tab" data-tab="Sandbox">Sandbox</button>
+                <button class="nav-tab" data-tab="Analytics">Analytics</button>
+                <button class="nav-tab" data-tab="Canary">Canary</button>
+                <button class="nav-tab" data-tab="Healing">Healing</button>
                 <button class="nav-tab" data-tab="Config">Config</button>
             </nav>
             <div class="header-actions">
@@ -240,6 +244,199 @@
                         Green = from base, blue = overridden.
                     </p>
                     <pre id="effective-config-json" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Sandbox Tab -->
+            <div id="tab-Sandbox" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Sandbox — Test Prompt</h3>
+                    <p class="config-description">Send a test prompt to any model and see the result, latency, and routing info.</p>
+                    <div class="form-group">
+                        <label class="form-label">Model</label>
+                        <select id="sandbox-model" class="form-input"></select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prompt</label>
+                        <textarea id="sandbox-prompt" class="form-input" rows="4" placeholder="Enter test prompt..."></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Max Tokens</label>
+                            <input type="number" id="sandbox-max-tokens" class="form-input" value="2048" min="1" max="32000">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Temperature</label>
+                            <input type="number" id="sandbox-temperature" class="form-input" value="0.7" min="0" max="2" step="0.1">
+                        </div>
+                    </div>
+                    <button id="sandbox-run-btn" class="btn-primary">Run Prompt</button>
+                    <div id="sandbox-result" class="json-display hidden" style="margin-top: 1rem;"></div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Compare Mode — Multi-Provider</h3>
+                    <p class="config-description">Run the same prompt against multiple models and compare results side by side.</p>
+                    <div class="form-group">
+                        <label class="form-label">Models (comma-separated)</label>
+                        <input type="text" id="compare-models" class="form-input" placeholder="browser/yandex, browser/qwen, browser/glm">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prompt</label>
+                        <textarea id="compare-prompt" class="form-input" rows="3" placeholder="Enter prompt to compare..."></textarea>
+                    </div>
+                    <button id="compare-run-btn" class="btn-primary">Run Comparison</button>
+                    <div id="compare-result" class="json-display hidden" style="margin-top: 1rem;"></div>
+                </div>
+            </div>
+
+            <!-- Analytics Tab -->
+            <div id="tab-Analytics" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-total-requests">—</div>
+                        <div class="stat-label">Total Requests</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-error-rate">—</div>
+                        <div class="stat-label">Error Rate</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-fallbacks">—</div>
+                        <div class="stat-label">Fallbacks</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-models-count">—</div>
+                        <div class="stat-label">Active Models</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Top Models</h3>
+                    <pre id="analytics-top-models" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Top Providers</h3>
+                    <pre id="analytics-top-providers" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Error Summary</h3>
+                    <pre id="analytics-errors" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Fallback Summary</h3>
+                    <pre id="analytics-fallbacks-detail" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Canary Tab -->
+            <div id="tab-Canary" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Canary / Experimental Models</h3>
+                    <p class="config-description">Manage experimental model rollouts with traffic splitting and auto-rollback guards.</p>
+
+                    <div class="form-group">
+                        <label class="form-label">Model ID</label>
+                        <input type="text" id="canary-model-id" class="form-input" placeholder="e.g. browser/qwen">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Provider ID</label>
+                        <input type="text" id="canary-provider-id" class="form-input" placeholder="e.g. qwen">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Status</label>
+                            <select id="canary-status" class="form-input">
+                                <option value="draft">Draft</option>
+                                <option value="canary">Canary</option>
+                                <option value="rollout">Rollout</option>
+                                <option value="ga">GA</option>
+                                <option value="deprecated">Deprecated</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Traffic %</label>
+                            <input type="number" id="canary-traffic" class="form-input" value="10" min="0" max="100" step="5">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Error Threshold</label>
+                            <input type="number" id="canary-error-threshold" class="form-input" value="0.1" min="0" max="1" step="0.05">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Notes</label>
+                        <input type="text" id="canary-notes" class="form-input" placeholder="Optional notes...">
+                    </div>
+                    <button id="canary-register-btn" class="btn-primary">Register Canary</button>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Active Canaries</h3>
+                    <pre id="canary-active" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Canary History</h3>
+                    <pre id="canary-history-list" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Healing Tab -->
+            <div id="tab-Healing" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="healing-total">—</div>
+                        <div class="stat-label">Total Checks</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-success);">
+                        <div class="stat-value" id="healing-healthy">—</div>
+                        <div class="stat-label">Healthy</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-warning);">
+                        <div class="stat-value" id="healing-degrading">—</div>
+                        <div class="stat-label">Degrading</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="healing-broken">—</div>
+                        <div class="stat-label">Broken</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Selector Health</h3>
+                    <p class="config-description">Health score per provider + role. Green = healthy (&gt;0.8), Yellow = degrading (0.5–0.8), Red = broken (&lt;0.5).</p>
+                    <div id="healing-health-table" style="overflow-x: auto;">
+                        <table class="healing-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Health</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Primary</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Fallback</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Healing</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody id="healing-health-tbody">
+                                <tr><td colspan="8" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Healed Locator Cache</h3>
+                    <pre id="healing-cache" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Healing Candidates</h3>
+                    <pre id="healing-candidates" class="json-display">Loading...</pre>
                 </div>
             </div>
         </main>

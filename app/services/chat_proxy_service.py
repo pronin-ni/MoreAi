@@ -5,23 +5,17 @@ Uses RoutingEngine to build a provider chain, then executes it with
 retry/fallback policy separation.
 """
 
-from dataclasses import replace
 
 from app.agents.completion_service import agent_completion_service
 from app.core.diagnostics import record_failure, record_routing_decision
-from app.core.logging import get_logger
 from app.core.errors import InternalError, ServiceUnavailableError
+from app.core.logging import get_logger
 from app.core.metrics import (
-    browser_execution_seconds,
     browser_active_workers,
-    errors_total,
-    fallback_total,
-    fallback_success,
-    requests_total,
-    routing_decision_total,
     circuit_breaker_state,
-    queue_wait_seconds,
-    request_latency,
+    fallback_success,
+    fallback_total,
+    routing_decision_total,
 )
 from app.core.tracing import trace_span
 from app.registry.unified import unified_registry
@@ -104,6 +98,16 @@ class ChatProxyService:
 
                         response = await self._execute_candidate(candidate, request, request_id)
 
+                        # Record analytics
+                        self._record_analytics(
+                            model=request.model,
+                            provider=candidate.provider_id,
+                            transport=candidate.transport,
+                            status="success",
+                            is_fallback=attempt_idx > 0,
+                            fallback_from=plan.candidates[0].provider_id if attempt_idx > 0 else None,
+                        )
+
                         # Record success metrics
                         if attempt_idx > 0:
                             fallback_success.inc(
@@ -118,6 +122,15 @@ class ChatProxyService:
 
                     except (ServiceUnavailableError, Exception) as exc:
                         last_error = exc
+
+                        # Record analytics for error
+                        self._record_analytics(
+                            model=request.model,
+                            provider=candidate.provider_id,
+                            transport=candidate.transport,
+                            status="error",
+                            error_type=type(exc).__name__,
+                        )
 
                         if retry_idx < max_retries:
                             # Same provider retry
@@ -224,6 +237,33 @@ class ChatProxyService:
             browser_active_workers.set(snapshot.get("active_workers", 0))
         except Exception:
             pass
+
+    def _record_analytics(
+        self,
+        *,
+        model: str,
+        provider: str,
+        transport: str,
+        status: str,
+        error_type: str | None = None,
+        is_fallback: bool = False,
+        fallback_from: str | None = None,
+    ) -> None:
+        """Record request analytics."""
+        try:
+            from app.services.analytics_service import usage_analytics
+
+            usage_analytics.record_request(
+                model=model,
+                provider=provider,
+                transport=transport,
+                status=status,
+                error_type=error_type,
+                is_fallback=is_fallback,
+                fallback_from=fallback_from,
+            )
+        except Exception:
+            pass  # Analytics must never break the request flow
 
 
 service = ChatProxyService()
