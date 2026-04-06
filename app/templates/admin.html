@@ -54,6 +54,7 @@
                 <button class="nav-tab" data-tab="Healing">Healing</button>
                 <button class="nav-tab" data-tab="Recon">Recon</button>
                 <button class="nav-tab" data-tab="Baseline">Baseline</button>
+                <button class="nav-tab" data-tab="Maintenance">Maintenance</button>
                 <button class="nav-tab" data-tab="Config">Config</button>
             </nav>
             <div class="header-actions">
@@ -585,6 +586,69 @@
                     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
                         <button id="baseline-refresh-btn" class="btn-secondary">↻ Refresh</button>
                         <button id="baseline-clear-btn" class="btn-secondary" style="border-color: var(--admin-error); color: var(--admin-error);">Clear All Baselines</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Selector Maintenance Tab -->
+            <div id="tab-Maintenance" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="maintenance-pending">—</div>
+                        <div class="stat-label">Pending Suggestions</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-success);">
+                        <div class="stat-value" id="maintenance-approved">—</div>
+                        <div class="stat-label">Approved</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="maintenance-rejected">—</div>
+                        <div class="stat-label">Rejected</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="maintenance-overrides">—</div>
+                        <div class="stat-label">Active Overrides</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Pending Suggestions</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="suggestions-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Suggested</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Confidence</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Times</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="suggestions-tbody">
+                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Active Overrides</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="overrides-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Override Selector</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Source</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="overrides-tbody">
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>

@@ -669,6 +669,8 @@
             loadRecon();
         } else if (tabName === 'Baseline') {
             loadBaseline();
+        } else if (tabName === 'Maintenance') {
+            loadMaintenance();
         }
     }
 
@@ -1009,6 +1011,76 @@
         }
     }
 
+    // ── Selector Maintenance ──
+    async function loadMaintenance() {
+        try {
+            // Load stats
+            const statsResp = await fetchApi('/admin/dom-baseline/providers');
+            const statsData = await statsResp.json();
+
+            // Load suggestions
+            const suggResp = await fetchApi('/selector-suggestions');
+            const suggData = await suggResp.json();
+            document.getElementById('maintenance-pending').textContent = suggData.count || '—';
+
+            // Load suggestions by status for approved/rejected counts
+            const approvedResp = await fetchApi('/selector-suggestions?status=approved');
+            const approvedData = await approvedResp.json();
+            document.getElementById('maintenance-approved').textContent = approvedData.count || '—';
+
+            const rejectedResp = await fetchApi('/selector-suggestions?status=rejected');
+            const rejectedData = await rejectedResp.json();
+            document.getElementById('maintenance-rejected').textContent = rejectedData.count || '—';
+
+            // Load overrides
+            const ovResp = await fetchApi('/selector-overrides');
+            const ovData = await ovResp.json();
+            document.getElementById('maintenance-overrides').textContent = ovData.length || '—';
+
+            // Render suggestions table
+            const suggTbody = document.getElementById('suggestions-tbody');
+            if (suggData.suggestions && suggData.suggestions.length > 0) {
+                suggTbody.innerHTML = suggData.suggestions.map(s =>
+                    `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.4rem;">${s.provider_id}</td>
+                        <td style="padding: 0.4rem;">${s.role}</td>
+                        <td style="padding: 0.4rem; font-size: 0.7rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${s.suggested_selector}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${(s.confidence * 100).toFixed(0)}%</td>
+                        <td style="padding: 0.4rem; text-align: center;">${s.times_observed}</td>
+                        <td style="padding: 0.4rem; text-align: center;">
+                            <button class="btn-approve" data-id="${s.id}" style="margin: 0 2px; padding: 2px 6px; background: #4ade80; border: none; border-radius: 2px; cursor: pointer; color: #000;">✓</button>
+                            <button class="btn-reject" data-id="${s.id}" style="margin: 0 2px; padding: 2px 6px; background: #f87171; border: none; border-radius: 2px; cursor: pointer; color: #fff;">✗</button>
+                            <button class="btn-dismiss" data-id="${s.id}" style="margin: 0 2px; padding: 2px 6px; background: #fbbf24; border: none; border-radius: 2px; cursor: pointer; color: #000;">⌫</button>
+                        </td>
+                    </tr>`
+                ).join('');
+            } else {
+                suggTbody.innerHTML = '<tr><td colspan="6" style="padding: 1rem; text-align: center;">No pending suggestions</td></tr>';
+            }
+
+            // Render overrides table
+            const ovTbody = document.getElementById('overrides-tbody');
+            if (ovData && ovData.length > 0) {
+                ovTbody.innerHTML = ovData.map(o =>
+                    `<tr style="border-bottom: 1px solid var(--admin-border);">
+                        <td style="padding: 0.4rem;">${o.provider_id}</td>
+                        <td style="padding: 0.4rem;">${o.role}</td>
+                        <td style="padding: 0.4rem; font-size: 0.7rem;">${o.selector}</td>
+                        <td style="padding: 0.4rem; text-align: center;">${o.source}</td>
+                        <td style="padding: 0.4rem; text-align: center;">
+                            <button class="btn-reset-override" data-provider="${o.provider_id}" data-role="${o.role}" style="padding: 2px 6px; background: #f87171; border: none; border-radius: 2px; cursor: pointer; color: #fff;">Reset</button>
+                        </td>
+                    </tr>`
+                ).join('');
+            } else {
+                ovTbody.innerHTML = '<tr><td colspan="5" style="padding: 1rem; text-align: center;">No active overrides</td></tr>';
+            }
+        } catch (e) {
+            console.error('Failed to load maintenance data:', e);
+            document.getElementById('suggestions-tbody').innerHTML = `<tr><td colspan="6" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${e.message}</td></tr>`;
+        }
+    }
+
     // ── Start ──
     init();
 
@@ -1045,5 +1117,58 @@
                 alert(`Failed to clear baselines: ${e.message}`);
             }
         });
+    });
+
+    // Event delegation for dynamic suggestion/override buttons
+    document.addEventListener('click', async (e) => {
+        const target = e.target;
+
+        // Approve suggestion
+        if (target.classList.contains('btn-approve')) {
+            const id = target.dataset.id;
+            if (!confirm(`Approve suggestion #${id}?`)) return;
+            try {
+                await fetchApi(`/selector-suggestions/${id}/approve`, { method: 'POST' });
+                loadMaintenance();
+            } catch (err) {
+                alert(`Failed to approve: ${err.message}`);
+            }
+        }
+
+        // Reject suggestion
+        if (target.classList.contains('btn-reject')) {
+            const id = target.dataset.id;
+            if (!confirm(`Reject suggestion #${id}?`)) return;
+            try {
+                await fetchApi(`/selector-suggestions/${id}/reject`, { method: 'POST' });
+                loadMaintenance();
+            } catch (err) {
+                alert(`Failed to reject: ${err.message}`);
+            }
+        }
+
+        // Dismiss suggestion
+        if (target.classList.contains('btn-dismiss')) {
+            const id = target.dataset.id;
+            try {
+                await fetchApi(`/selector-suggestions/${id}/dismiss`, { method: 'POST' });
+                loadMaintenance();
+            } catch (err) {
+                alert(`Failed to dismiss: ${err.message}`);
+            }
+        }
+
+        // Reset override
+        if (target.classList.contains('btn-reset-override')) {
+            const provider = target.dataset.provider;
+            const role = target.dataset.role;
+            if (!confirm(`Reset override for ${provider}/${role}?`)) return;
+            try {
+                await fetchApi(`/selector-overrides/reset/${provider}?role=${encodeURIComponent(role)}`, { method: 'POST' });
+                loadMaintenance();
+            } catch (err) {
+                alert(`Failed to reset override: ${err.message}`);
+            }
+        }
     });
 })();

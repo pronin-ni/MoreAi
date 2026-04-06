@@ -56,9 +56,19 @@ async def lifespan(app: FastAPI):
     await webhook_dispatcher.start()
     logger.info("Webhook dispatcher started")
 
+    # Start proactive baseline refresher
+    from app.browser.dom.refresh import baseline_refresher
+    await baseline_refresher.start()
+    logger.info("Baseline refresher started")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
+
+    # Stop baseline refresher
+    from app.browser.dom.refresh import baseline_refresher
+    await baseline_refresher.stop()
+    logger.info("Baseline refresher stopped")
 
     # Stop webhook dispatcher
     from app.services.webhooks import webhook_dispatcher

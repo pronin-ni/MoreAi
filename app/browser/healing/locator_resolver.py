@@ -17,9 +17,10 @@ import time
 from playwright.async_api import Locator, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
-from app.browser.dom import baseline_store, dom_drift_telemetry
+from app.browser.dom import baseline_store, dom_drift_telemetry, persistent_dom_store, suggestion_engine
 from app.browser.dom.baseline import DOMBaseline
 from app.browser.dom.diff import diff_against_baseline
+from app.browser.dom.overrides import selector_override_manager
 from app.browser.dom.store import DriftRecord
 from app.browser.healing.element_verifier import ElementVerifier
 from app.browser.healing.healing_engine import HealingEngine
@@ -97,6 +98,14 @@ class LocatorResolver:
                     role=role,
                     selector=selector,
                     successes=count,
+                )
+                # Generate maintenance suggestion
+                existing_baseline = baseline_store.get_baseline(self.provider_id, role)
+                suggestion_engine.record_promotion(
+                    provider_id=self.provider_id,
+                    role=role,
+                    selector=selector,
+                    current_selector=existing_baseline.selector if existing_baseline else "",
                 )
 
     async def resolve(
@@ -452,6 +461,7 @@ class LocatorResolver:
         Baseline is captured only if:
         - No baseline exists yet, or
         - Confidence is high (>= 0.85) — indicates strong match
+        Also persists to SQLite and generates suggestions if applicable.
         """
         existing = baseline_store.get_baseline(self.provider_id, role)
         is_update = existing is not None
@@ -461,11 +471,14 @@ class LocatorResolver:
             return
 
         try:
+            selector_str = await locator.evaluate(
+                "el => { const s = el.tagName.toLowerCase(); const id = el.id ? '#' + el.id : ''; const cls = el.className ? '.' + el.className.split(' ')[0] : ''; return s + id + cls; }"
+            )
             baseline = await DOMBaseline.from_locator(
                 locator=locator,
                 provider_id=self.provider_id,
                 role=role,
-                selector=await locator.evaluate("el => { const s = el.tagName.toLowerCase(); const id = el.id ? '#' + el.id : ''; const cls = el.className ? '.' + el.className.split(' ')[0] : ''; return s + id + cls; }"),
+                selector=selector_str,
                 capture_reason=reason,
                 confidence=confidence,
                 version=existing.version + 1 if existing else 1,
@@ -478,6 +491,19 @@ class LocatorResolver:
                 dom_drift_telemetry.update_baseline_age(
                     self.provider_id, baseline.captured_at
                 )
+
+                # Persist to SQLite
+                persistent_dom_store.save_baseline(baseline.to_dict())
+
+                # Record suggestion for promoted selectors
+                if reason == "healing_success" and confidence >= 0.85:
+                    suggestion_engine.record_healing_success(
+                        provider_id=self.provider_id,
+                        role=role,
+                        selector=selector_str,
+                        confidence=confidence,
+                        current_selector=existing.selector if existing else "",
+                    )
 
                 # If updating, check for drift against old baseline
                 if existing:
@@ -495,6 +521,29 @@ class LocatorResolver:
                             severity=diff_result.drift_severity,
                             reason=diff_result.human_summary,
                         )
+                        # Persist drift event
+                        persistent_dom_store.save_drift_event({
+                            "provider_id": self.provider_id,
+                            "role": role,
+                            "trigger": f"baseline_update_{reason}",
+                            "drift_severity": diff_result.drift_severity,
+                            "drift_score": diff_result.drift_score,
+                            "human_summary": diff_result.human_summary,
+                            "diff_json": {
+                                "events_count": len(diff_result.drift_events),
+                                "events": [e.to_dict() for e in diff_result.drift_events[:5]],
+                            },
+                        })
+                        # Record suggestion for drift
+                        if diff_result.drift_severity == "high":
+                            new_selector = selector_str
+                            suggestion_engine.record_drift(
+                                provider_id=self.provider_id,
+                                role=role,
+                                severity=diff_result.drift_severity,
+                                current_selector=existing.selector,
+                                suggested_selector=new_selector,
+                            )
         except Exception as exc:
             logger.debug(
                 "Baseline capture failed",

@@ -1324,6 +1324,118 @@ async def dom_drift_stats(provider_id: str = "", _=Depends(require_admin)):
     }
 
 
+# ── Selector Maintenance ──
+
+
+@router.get("/selector-suggestions")
+async def list_suggestions(
+    provider_id: str = "",
+    status: str = "",
+    _=Depends(require_admin),
+):
+    """List selector maintenance suggestions."""
+    from app.browser.dom.suggestions import suggestion_engine
+
+    pid = provider_id if provider_id else None
+    st = status if status else None
+    suggestions = suggestion_engine.get_pending_suggestions(provider_id=pid)
+    if st and st != "pending":
+        from app.browser.dom.persistent_store import persistent_dom_store
+        suggestions = persistent_dom_store.get_suggestions(status=st, provider_id=pid)
+
+    return {
+        "count": len(suggestions),
+        "suggestions": suggestions,
+    }
+
+
+@router.get("/selector-suggestions/{suggestion_id}")
+async def get_suggestion(suggestion_id: int, _=Depends(require_admin)):
+    """Get a single suggestion with details."""
+    from app.browser.dom.persistent_store import persistent_dom_store
+
+    suggestion = persistent_dom_store.get_suggestion(suggestion_id)
+    if not suggestion:
+        return JSONResponse(status_code=404, content={"error": "Suggestion not found"})
+
+    # Get drift history for this provider+role
+    from app.browser.dom.persistent_store import persistent_dom_store as store
+    drift_events = store.get_drift_events(
+        provider_id=suggestion["provider_id"],
+        limit=10,
+    )
+
+    return {
+        "suggestion": suggestion,
+        "drift_history": drift_events,
+    }
+
+
+@router.post("/selector-suggestions/{suggestion_id}/approve")
+async def approve_suggestion(
+    suggestion_id: int,
+    override_selector: str = "",
+    _=Depends(require_admin),
+):
+    """Approve a suggestion and create an override."""
+    from app.browser.dom.suggestions import suggestion_engine
+
+    result = suggestion_engine.approve_suggestion(suggestion_id, override_selector)
+    if not result:
+        return JSONResponse(status_code=404, content={"error": "Suggestion not found"})
+
+    return SuccessResponse(message=f"Suggestion {suggestion_id} approved")
+
+
+@router.post("/selector-suggestions/{suggestion_id}/reject")
+async def reject_suggestion(suggestion_id: int, _=Depends(require_admin)):
+    """Reject a suggestion."""
+    from app.browser.dom.persistent_store import persistent_dom_store
+
+    result = persistent_dom_store.update_suggestion(suggestion_id, {"status": "rejected"})
+    if not result:
+        return JSONResponse(status_code=404, content={"error": "Suggestion not found"})
+
+    return SuccessResponse(message=f"Suggestion {suggestion_id} rejected")
+
+
+@router.post("/selector-suggestions/{suggestion_id}/dismiss")
+async def dismiss_suggestion(suggestion_id: int, _=Depends(require_admin)):
+    """Dismiss a suggestion."""
+    from app.browser.dom.persistent_store import persistent_dom_store
+
+    result = persistent_dom_store.update_suggestion(suggestion_id, {"status": "dismissed"})
+    if not result:
+        return JSONResponse(status_code=404, content={"error": "Suggestion not found"})
+
+    return SuccessResponse(message=f"Suggestion {suggestion_id} dismissed")
+
+
+@router.get("/selector-overrides")
+async def list_overrides(provider_id: str = "", _=Depends(require_admin)):
+    """List active selector overrides."""
+    from app.browser.dom.overrides import selector_override_manager
+
+    pid = provider_id if provider_id else None
+    return selector_override_manager.get_all_overrides(pid)
+
+
+@router.post("/selector-overrides/reset/{provider_id}")
+async def reset_override(
+    provider_id: str,
+    role: str = "",
+    _=Depends(require_admin),
+):
+    """Remove selector override(s) for a provider, reverting to base profile."""
+    from app.browser.dom.overrides import selector_override_manager
+
+    removed = selector_override_manager.reset_override(provider_id, role if role else None)
+    return SuccessResponse(
+        message=f"Reset {removed} override(s) for {provider_id}"
+        + (f" role={role}" if role else "")
+    )
+
+
 def _get_provider_health_summary(provider_id: str) -> dict:
     """Get health summary for a provider."""
     try:
