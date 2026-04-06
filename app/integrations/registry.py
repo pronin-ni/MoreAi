@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from app.core.logging import get_logger
@@ -22,26 +23,42 @@ class APIRegistry:
         self._models: dict[str, ModelDefinition] = {}
         self._cooldowns: dict[str, float] = {}
         self._initialized = False
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        config_snapshot = load_integrations_config(list(self._definitions.values()))
-        self._adapters.clear()
-        self._models.clear()
+        """Snapshot-based refresh: build new state separately, then atomically swap."""
+        logger.info("Starting API registry refresh")
+        async with self._lock:
+            # Build new state in isolation — current state stays live during discovery
+            new_adapters: dict[str, OpenAICompatibleIntegration] = {}
+            new_models: dict[str, ModelDefinition] = {}
 
-        for definition in self._definitions.values():
-            runtime_config = config_snapshot.by_integration[definition.integration_id]
-            adapter_cls = self._adapter_class_for(definition)
-            adapter = adapter_cls(definition, runtime_config)
-            self._adapters[definition.integration_id] = adapter
+            config_snapshot = load_integrations_config(list(self._definitions.values()))
 
-            for model_definition in await adapter.discover_models():
-                self._models[model_definition.id] = model_definition
+            for definition in self._definitions.values():
+                runtime_config = config_snapshot.by_integration[definition.integration_id]
+                adapter_cls = self._adapter_class_for(definition)
+                adapter = adapter_cls(definition, runtime_config)
+                new_adapters[definition.integration_id] = adapter
 
-        self._initialized = True
+                for model_definition in await adapter.discover_models():
+                    new_models[model_definition.id] = model_definition
+
+            # Preserve cooldowns from current state (rate limits survive refresh)
+            new_cooldowns = dict(self._cooldowns)
+
+            # Atomic swap — readers always see a complete, consistent snapshot
+            old_model_count = len(self._models)
+            self._adapters = new_adapters
+            self._models = new_models
+            self._cooldowns = new_cooldowns
+            self._initialized = True
+
         logger.info(
-            "Initialized API registry",
+            "API registry refresh complete",
             integrations=len(self._adapters),
             models=len(self._models),
+            previous_models=old_model_count,
         )
 
     def list_models(self) -> list[dict]:
@@ -102,9 +119,11 @@ class APIRegistry:
         canonical_model_id: str,
         exclude_provider_id: str,
     ) -> ResolvedModel | None:
+        # Snapshot _models to avoid iteration during concurrent refresh
+        models_snapshot = dict(self._models)
         upstream_model = canonical_model_id.split("/", 2)[-1]
         candidates: list[ModelDefinition] = []
-        for model in self._models.values():
+        for model in models_snapshot.values():
             if model.provider_id == exclude_provider_id:
                 continue
             if not model.enabled or not model.available:

@@ -46,6 +46,7 @@
                 <button class="nav-tab active" data-tab="overview">Overview</button>
                 <button class="nav-tab" data-tab="Providers">Providers</button>
                 <button class="nav-tab" data-tab="Models">Models</button>
+                <button class="nav-tab" data-tab="Health">Health</button>
                 <button class="nav-tab" data-tab="Actions">Actions</button>
                 <button class="nav-tab" data-tab="Config">Config</button>
             </nav>
@@ -168,6 +169,40 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <!-- Health Tab -->
+            <div id="tab-Health" class="tab-content">
+                <div class="stats-grid" id="health-stats">
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-status">—</div>
+                        <div class="stat-label">System Status</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-workers">—</div>
+                        <div class="stat-label">Active Workers</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-queue">—</div>
+                        <div class="stat-label">Queue Depth</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-degraded">—</div>
+                        <div class="stat-label">Degraded</div>
+                    </div>
+                </div>
+                <div class="card mt-md hidden" id="health-degraded-card">
+                    <h3 class="card-title">Degraded Components</h3>
+                    <ul id="degraded-list" class="degraded-list"></ul>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Recent Failures</h3>
+                    <pre id="recent-failures-json" class="json-display">Loading...</pre>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Routing Decisions</h3>
+                    <pre id="routing-decisions-json" class="json-display">Loading...</pre>
                 </div>
             </div>
 

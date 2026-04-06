@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -40,6 +41,7 @@ class AgentRegistry:
         self._models: dict[str, AgentModelDefinition] = {}
         self._initialized = False
         self._pending_providers: list[AgentProvider] = []
+        self._lock = asyncio.Lock()
 
     def register(self, provider: AgentProvider, models: list[AgentModelDefinition]) -> None:
         self._providers[provider.provider_id] = provider
@@ -52,12 +54,15 @@ class AgentRegistry:
 
     async def initialize(self) -> None:
         """Initialize all registered and pending providers."""
-        # Initialize pending providers (they will self-register models)
-        for provider in self._pending_providers:
-            await provider.initialize()
-        self._initialized = True
+        async with self._lock:
+            # Initialize pending providers (they will self-register models)
+            for provider in self._pending_providers:
+                await provider.initialize()
+            self._initialized = True
 
     def list_models(self) -> list[dict]:
+        # Snapshot _models for consistent read during concurrent refresh
+        models_snapshot = dict(self._models)
         return [
             {
                 "id": model.id,
@@ -68,7 +73,7 @@ class AgentRegistry:
                 "available": model.available,
                 **model.metadata,
             }
-            for model in self._models.values()
+            for model in models_snapshot.values()
         ]
 
     def can_resolve_model(self, model_name: str) -> bool:

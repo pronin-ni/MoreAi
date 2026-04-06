@@ -489,6 +489,56 @@
         }
     };
 
+    // ── Health Tab ──
+    async function loadHealth() {
+        try {
+            const resp = await fetchApi('/diagnostics/status');
+            const data = await resp.json();
+            renderHealth(data);
+        } catch (err) {
+            console.error('Failed to load health data:', err);
+        }
+        try {
+            const resp = await fetchApi('/diagnostics/failures');
+            const data = await resp.json();
+            document.getElementById('recent-failures-json').textContent =
+                JSON.stringify(data, null, 2);
+        } catch (err) {
+            console.error('Failed to load failures:', err);
+        }
+        try {
+            const resp = await fetchApi('/diagnostics/routing');
+            const data = await resp.json();
+            document.getElementById('routing-decisions-json').textContent =
+                JSON.stringify(data, null, 2);
+        } catch (err) {
+            console.error('Failed to load routing:', err);
+        }
+    }
+
+    function renderHealth(data) {
+        const degradedCount = data.degraded_components?.length || 0;
+        document.getElementById('health-status').textContent =
+            degradedCount > 0 ? 'degraded' : 'healthy';
+        document.getElementById('health-status').style.color =
+            degradedCount > 0 ? 'var(--admin-danger)' : 'var(--admin-success)';
+        document.getElementById('health-workers').textContent =
+            data.worker_pool?.active_workers ?? '—';
+        document.getElementById('health-queue').textContent =
+            data.queue_stats?.current_size ?? '—';
+        document.getElementById('health-degraded').textContent = degradedCount;
+
+        const degradedCard = document.getElementById('health-degraded-card');
+        const degradedList = document.getElementById('degraded-list');
+        if (degradedCount > 0) {
+            degradedCard.classList.remove('hidden');
+            degradedList.innerHTML = data.degraded_components
+                .map(c => `<li>${c}</li>`).join('');
+        } else {
+            degradedCard.classList.add('hidden');
+        }
+    }
+
     // ── Actions ──
     async function loadActions() {
         try {
@@ -585,6 +635,8 @@
             loadProviders();
         } else if (tabName === 'Models' && allModels.length === 0) {
             loadModels();
+        } else if (tabName === 'Health') {
+            loadHealth();
         } else if (tabName === 'Actions' && allActions.length === 0) {
             loadActions();
         } else if (tabName === 'Config') {

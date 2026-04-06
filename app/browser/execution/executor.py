@@ -90,13 +90,36 @@ class BrowserProviderExecutor:
                     provider_id=request.provider_id,
                     attempt=attempt + 1,
                 )
-                await self._restart_runtime()
+                last_error = ExecutionTimeoutError(
+                    f"Browser task timed out after {request.execution_timeout_seconds} seconds",
+                    details={
+                        "task_id": request.task_id,
+                        "provider_id": request.provider_id,
+                        "phase": "execution",
+                    },
+                )
+                # Timeout is classified as retryable — retry within limits
+                retryable = True
+                failure_kind = "transient_browser_failure"
+
+                if attempt < request.max_retries:
+                    job.retry_count += 1
+                    await self._restart_runtime()
+                    await asyncio.sleep(
+                        min(
+                            settings.browser_retry_backoff_seconds * (2**attempt),
+                            max(settings.browser_retry_backoff_seconds, 2.0),
+                        )
+                    )
+                    continue
+
                 raise ExecutionTimeoutError(
                     f"Browser task timed out after {request.execution_timeout_seconds} seconds",
                     details={
                         "task_id": request.task_id,
                         "provider_id": request.provider_id,
                         "phase": "execution",
+                        "attempts": attempt + 1,
                     },
                 ) from exc
             except BrowserError as exc:
