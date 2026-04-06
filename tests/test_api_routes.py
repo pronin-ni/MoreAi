@@ -11,8 +11,8 @@ from app.schemas.openai import ChatCompletionResponse, Choice, Message, Model, M
 @pytest.fixture
 def client():
     with (
-        patch("app.main.pool.initialize", new=AsyncMock()),
-        patch("app.main.pool.shutdown", new=AsyncMock()),
+        patch("app.main.browser_dispatcher.initialize", new=AsyncMock()),
+        patch("app.main.browser_dispatcher.shutdown", new=AsyncMock()),
         patch("app.main.unified_registry.initialize", new=AsyncMock()),
     ):
         yield TestClient(app)
@@ -60,11 +60,16 @@ class TestModelsEndpoint:
         "app.api.routes_openai.unified_registry.diagnostics",
         return_value={"browser": [], "api_integrations": [], "api_models": []},
     )
-    def test_diagnostics_endpoint(self, _mock_diagnostics, client):
+    @patch(
+        "app.api.routes_openai.browser_dispatcher.diagnostics",
+        return_value={"queue_size": 0, "state": "running"},
+    )
+    def test_diagnostics_endpoint(self, _mock_browser_diagnostics, _mock_diagnostics, client):
         response = client.get("/diagnostics/integrations")
 
         assert response.status_code == 200
         assert response.json()["api_models"] == []
+        assert response.json()["browser_execution"]["state"] == "running"
 
 
 class TestChatCompletionsEndpoint:

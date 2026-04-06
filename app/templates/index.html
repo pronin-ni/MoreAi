@@ -68,9 +68,10 @@
         <button
             class="btn-text"
             hx-post="/ui/chat"
+            hx-include="#chat-form"
             hx-vals='{"action": "clear"}'
-            hx-target="body"
-            hx-swap="none"
+            hx-target="#chat-response-target"
+            hx-swap="innerHTML"
             title="Clear chat"
         >
             Clear
@@ -96,11 +97,11 @@
         id="chat-form"
         hx-post="/ui/chat"
         hx-target="#chat-response-target"
-        hx-swap="afterend"
+        hx-swap="innerHTML"
         hx-sync="this:queue"
     >
         <input type="hidden" name="model" value="{{ selected_model }}">
-        <input type="hidden" name="conversation_json" value="{{ conversation_json }}">
+        <input type="hidden" id="conversation-json-input" name="conversation_json" value="{{ conversation_json }}">
         
         <div class="chat-input-wrapper">
             <textarea
@@ -147,7 +148,9 @@
     <div class="diagnostics-header">
         <h3>Diagnostics</h3>
     </div>
-    
-    {% include "partials/diagnostics.html" %}
+
+    <div id="diagnostics-content-target">
+        {% include "partials/diagnostics.html" %}
+    </div>
 </aside>
 {% endblock %}

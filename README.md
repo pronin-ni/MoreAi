@@ -1,9 +1,10 @@
 # MoreAI Proxy
 
-OpenAI-compatible FastAPI proxy with two execution transports behind one unified model namespace:
+OpenAI-compatible FastAPI proxy with three execution transports behind one unified model namespace:
 
 1. `browser/*` for Playwright/browser providers
 2. `api/*` for OpenAI-compatible upstream APIs, g4f integrations, and client-based API providers
+3. `agent/*` for agent-based providers like OpenCode server mode
 
 ## Namespace
 
@@ -37,9 +38,19 @@ Examples:
 - `api/openrouter/gpt-4o-mini`
 - `api/ollamafreeapi/llama3.3:70b`
 
+Canonical agent models use:
+
+- `agent/opencode/<provider_key>/<model_id>`
+
+Examples:
+
+- `agent/opencode/openai/gpt-4`
+- `agent/opencode/anthropic/claude-3-sonnet`
+- `agent/opencode/google/gemini-2.0-flash`
+
 ## Architecture
 
-The routing stack is split into three layers:
+The routing stack is split into four layers:
 
 1. `browser_registry`
 Browser-only Playwright providers.
@@ -47,16 +58,22 @@ Browser-only Playwright providers.
 2. `api_registry`
 OpenAI-compatible integrations discovered from `g4f.dev/docs/ready_to_use.html` plus explicit client-based providers such as `ollamafreeapi`.
 
-3. `unified_registry`
-Facade that aggregates browser and API models, resolves aliases, and returns execution strategy.
+3. `agent_registry`
+Agent-based providers that use server-mode APIs (e.g., OpenCode server). Models are discovered at runtime from the live instance, not hardcoded.
+
+4. `unified_registry`
+Facade that aggregates browser, API, and agent models, resolves aliases, and returns execution strategy.
 
 Core abstractions:
 
 - `IntegrationDefinition`
 - `OpenAICompatibleIntegration`
 - `ClientBasedIntegration`
+- `AgentProvider`
+- `OpenCodeProvider`
 - `ProviderRegistry`
 - `APIRegistry`
+- `AgentRegistry`
 - `UnifiedRegistry`
 
 ## Ready-To-Use Integrations Parsed From Source
@@ -109,6 +126,150 @@ Client-based integrations are represented separately from OpenAI-compatible upst
 - canonical namespace: `api/ollamafreeapi/<upstream_model>`
 - discovery source: `OllamaFreeAPI.list_models()`
 - completion path: `OllamaFreeAPI.chat()`
+
+## OpenCode Agent Provider
+
+The `agent/opencode/*` transport integrates [OpenCode](https://opencode.ai) in server mode. Instead of browser automation or direct API calls, it uses OpenCode's HTTP server API to send prompts to AI coding agents.
+
+### Why Server Mode?
+
+OpenCode supports `opencode serve`, which starts a headless HTTP server with an OpenAPI endpoint. This is:
+
+- **More reliable** than TUI scraping or CLI stdout parsing
+- **Native API surface** designed for programmatic integration
+- **Multi-client support** with proper session management
+- **Built-in authentication** via HTTP Basic Auth
+
+### How It Works
+
+1. **Runtime Discovery**: Models are discovered from the live OpenCode instance via `/provider` and `/config/providers` endpoints
+2. **No Hardcoding**: Free/available models are determined by what's actually configured and connected in your OpenCode instance
+3. **Stateless Sessions**: Each request creates a short-lived session (create → prompt → extract → cleanup)
+4. **Canonical Naming**: Models are registered as `agent/opencode/<provider_key>/<model_id>`
+
+### Model Classification
+
+Each discovered model is classified with rich metadata:
+
+| Field | Description |
+|-------|-------------|
+| `source_kind` | `zen`, `bundled_free`, `plugin`, `external_provider`, or `unknown` |
+| `requires_auth` | Whether the model requires authentication |
+| `provider_connected` | Whether the provider is currently connected/authenticated |
+| `is_runtime_available` | Whether the model is actually available for use right now |
+
+**Source kinds explained:**
+- `zen` — OpenCode Zen provider (built-in curated models)
+- `bundled_free` — Free models included with OpenCode (e.g., Antigravity)
+- `plugin` — Models from OpenCode plugins (`opencode-*` prefixed providers)
+- `external_provider` — Externally configured providers (OpenAI, Anthropic, etc.) with auth
+- `unknown` — Provider source unclear, but model is present in config
+
+**Important**: This is runtime discovery, not static allowlists. The classification is based on:
+- Provider ID patterns
+- Connection status from `/provider` endpoint
+- Auth metadata from provider configuration
+- No assumptions about what "should" be free — only what the live instance reports
+
+### Setup
+
+**1. Configure**
+
+Add to your `.env`:
+
+```env
+# Enable OpenCode provider with managed lifecycle (default)
+OPENCODE_ENABLED=true
+OPENCODE_MANAGED=true
+OPENCODE_AUTOSTART=true
+
+# Optional: OpenCode server password (if you want to secure the server)
+OPENCODE_PASSWORD=your-secret
+OPENCODE_USERNAME=opencode
+
+# Optional: require OpenCode to start successfully
+# OPENCODE_REQUIRED=true  # fail app startup if OpenCode can't start
+```
+
+That's it. MoreAI will:
+- Start `opencode serve` as a managed subprocess on startup
+- Wait for healthcheck (30s timeout by default)
+- Discover available models automatically
+- Gracefully stop the subprocess on shutdown
+
+**2. External mode (dev/debug)**
+
+If you prefer to run OpenCode separately:
+
+```env
+OPENCODE_MANAGED=false
+OPENCODE_BASE_URL=http://127.0.0.1:4096
+```
+
+Then start OpenCode manually:
+```bash
+opencode serve --port 4096
+```
+
+### Example Discovered Models
+
+Models depend on your OpenCode configuration. Examples:
+
+```
+agent/opencode/zen/gemini-2.0-flash        # Zen provider (if connected)
+agent/opencode/antigravity/gemini-3-pro    # Bundled free (if configured)
+agent/opencode/openai/gpt-4                # External provider (if API key set)
+agent/opencode/glm/glm-4.7                 # GLM provider (if configured)
+agent/opencode/minimax/minimax-m2.1        # MiniMax provider (if configured)
+```
+
+**Note**: Only models that appear in your live OpenCode instance's configuration will be available. The gateway does not use marketing claims or static lists.
+
+### Diagnostics
+
+Check provider status with detailed classification:
+
+```bash
+curl http://localhost:8000/v1/models/diagnostics | jq '.agent_providers'
+```
+
+Shows:
+- **Mode**: `managed`, `external`, `managed_no_autostart`, or `disabled`
+- **Runtime** (managed mode only):
+  - Process PID and uptime
+  - Exit code (if stopped)
+  - Last 5 lines of stdout/stderr
+  - Startup errors
+- **Models**: grouped by source kind (`zen`, `bundled_free`, `external_provider`, etc.)
+- **Connected providers**: list of authenticated providers
+- **Per-model metadata**: auth requirements, connection status, availability
+
+### Graceful Degradation
+
+If the OpenCode server fails to start (managed mode):
+- Process start fails → provider marked unavailable with clear error
+- Healthcheck times out → diagnostic shows exact failure reason
+- MoreAI continues running (unless `OPENCODE_REQUIRED=true`)
+- No agent models appear in `/v1/models`
+- Requests to agent models return `503 Service Unavailable`
+
+### Docker / NAS Deployment
+
+For a single-container deployment:
+
+```yaml
+# docker-compose.yml
+services:
+  moreai:
+    build: .
+    environment:
+      - OPENCODE_ENABLED=true
+      - OPENCODE_MANAGED=true
+      - OPENCODE_AUTOSTART=true
+    # No need for a separate opencode container — it's managed internally
+```
+
+One command, one service. No manual `opencode serve` required.
 
 ## Configuration
 

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoreAI Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23ffffff'/%3E%3Ctext x='32' y='44' font-family='monospace' font-size='36' font-weight='300' text-anchor='middle' fill='%231f2228'%3EM%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/admin/admin.css">
+</head>
+<body>
+    <!-- ── Login Screen ── -->
+    <div id="login-screen" class="login-container">
+        <div class="login-card">
+            <h1 class="login-title">MoreAI Admin</h1>
+            <p class="login-subtitle">Enter your admin token to continue</p>
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label for="admin-token-input" class="form-label">Admin Token</label>
+                    <input
+                        type="password"
+                        id="admin-token-input"
+                        class="form-input"
+                        placeholder="Enter admin token"
+                        autocomplete="off"
+                        required
+                    >
+                </div>
+                <div id="login-error" class="error-message hidden"></div>
+                <button type="submit" id="login-btn" class="btn-primary">Sign In</button>
+            </form>
+            <p class="login-hint">
+                Token is stored in your browser's local storage.
+                <a href="#" id="clear-token-link">Clear saved token</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- ── Dashboard Screen ── -->
+    <div id="dashboard-screen" class="dashboard-container hidden">
+        <header class="dashboard-header">
+            <h1 class="dashboard-logo">MoreAI <span class="badge">Admin</span></h1>
+            <nav class="dashboard-nav">
+                <button class="nav-tab active" data-tab="overview">Overview</button>
+                <button class="nav-tab" data-tab="Providers">Providers</button>
+                <button class="nav-tab" data-tab="Models">Models</button>
+                <button class="nav-tab" data-tab="Actions">Actions</button>
+                <button class="nav-tab" data-tab="Config">Config</button>
+            </nav>
+            <div class="header-actions">
+                <button id="refresh-btn" class="btn-secondary">↻ Refresh</button>
+                <button id="logout-btn" class="btn-secondary">Sign Out</button>
+            </div>
+        </header>
+
+        <main class="dashboard-content">
+            <!-- Overview Tab -->
+            <div id="tab-overview" class="tab-content active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-providers">—</div>
+                        <div class="stat-label">Providers</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-models">—</div>
+                        <div class="stat-label">Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-agent-models">—</div>
+                        <div class="stat-label">Agent Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-config-version">—</div>
+                        <div class="stat-label">Config Version</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-config-state">—</div>
+                        <div class="stat-label">Config State</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-version">—</div>
+                        <div class="stat-label">Version</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title">System Status</h3>
+                    <pre id="system-status-json" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Providers Tab -->
+            <div id="tab-Providers" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Provider Status</h3>
+                    <div class="table-container">
+                        <table class="data-table" id="providers-table">
+                            <thead>
+                                <tr>
+                                    <th>Provider</th>
+                                    <th>Transport</th>
+                                    <th>Enabled</th>
+                                    <th>Override</th>
+                                    <th>Effective</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="providers-tbody">
+                                <tr><td colspan="6" class="loading-cell">Loading providers...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Models Tab -->
+            <div id="tab-Models" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">
+                        Models
+                        <span class="model-count" id="models-count-badge"></span>
+                    </h3>
+                    <div class="search-bar">
+                        <input type="text" id="models-search" class="form-input" placeholder="Search models...">
+                        <select id="models-transport-filter" class="form-input">
+                            <option value="">All Transports</option>
+                            <option value="browser">Browser</option>
+                            <option value="api">API</option>
+                            <option value="agent">Agent</option>
+                        </select>
+                        <select id="models-status-filter" class="form-input">
+                            <option value="">All Status</option>
+                            <option value="enabled">Enabled</option>
+                            <option value="disabled">Disabled</option>
+                            <option value="hidden">Hidden</option>
+                        </select>
+                    </div>
+                    <!-- Bulk Action Bar -->
+                    <div id="models-bulk-bar" class="bulk-bar hidden">
+                        <span class="bulk-count" id="models-bulk-count">0 selected</span>
+                        <div class="bulk-actions">
+                            <button class="btn-sm btn-success" onclick="window.__admin.bulkAction('enable')">Enable</button>
+                            <button class="btn-sm btn-warning" onclick="window.__admin.bulkAction('disable')">Disable</button>
+                            <button class="btn-sm btn-secondary" onclick="window.__admin.bulkAction('hide')">Hide</button>
+                            <button class="btn-sm btn-secondary" onclick="window.__admin.bulkAction('show')">Show</button>
+                            <button class="btn-sm btn-danger" onclick="window.__admin.clearSelection()">Clear</button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table" id="models-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-checkbox">
+                                        <input type="checkbox" id="models-select-all" class="form-checkbox">
+                                    </th>
+                                    <th>Model ID</th>
+                                    <th>Transport</th>
+                                    <th>Provider</th>
+                                    <th>Enabled</th>
+                                    <th>Visibility</th>
+                                    <th>Available</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="models-tbody">
+                                <tr><td colspan="8" class="loading-cell">Loading models...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions Tab -->
+            <div id="tab-Actions" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Operational Actions</h3>
+                    <div id="actions-list" class="actions-grid">
+                        <div class="loading-cell">Loading actions...</div>
+                    </div>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Config Rollback</h3>
+                    <div id="rollback-section">
+                        <button id="rollback-btn" class="btn-secondary">↩ Rollback to Last Version</button>
+                        <div id="rollback-result" class="action-result hidden"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Config Tab -->
+            <div id="tab-Config" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Effective Configuration</h3>
+                    <p class="config-description">
+                        Shows the computed effective config from base settings and admin overrides.
+                        Green = from base, blue = overridden.
+                    </p>
+                    <pre id="effective-config-json" class="json-display">Loading...</pre>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/admin/admin.js"></script>
+</body>
+</html>

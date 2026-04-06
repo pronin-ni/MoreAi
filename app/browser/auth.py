@@ -1,13 +1,18 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout, async_playwright
+from playwright.async_api import Page, async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.browser.registry import registry
 from app.core.config import settings
 from app.core.errors import BrowserError
 from app.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.browser.execution.runtime import WorkerBrowserRuntime
 
 logger = get_logger(__name__)
 
@@ -28,7 +33,11 @@ class ProviderCredentials:
 class AuthBootstrapper:
     """Bootstrap provider auth using provider-specific auth flows."""
 
-    async def ensure_model_authenticated(self, model: str) -> str | None:
+    async def ensure_model_authenticated(
+        self,
+        model: str,
+        runtime: WorkerBrowserRuntime | None = None,
+    ) -> str | None:
         provider_class = registry.get_provider_class(model)
         provider_config = registry.get_provider_config(model)
         storage_state_path = (
@@ -63,6 +72,7 @@ class AuthBootstrapper:
                 provider_config=provider_config,
                 credentials=credentials,
                 storage_state_path=storage_state_path,
+                runtime=runtime,
             )
             return storage_state_path
 
@@ -80,6 +90,7 @@ class AuthBootstrapper:
                 provider_config=provider_config,
                 credentials=credentials,
                 storage_state_path=storage_state_path,
+                runtime=runtime,
             )
             return storage_state_path
 
@@ -167,9 +178,30 @@ class AuthBootstrapper:
         provider_config: dict,
         credentials: GoogleCredentials,
         storage_state_path: str,
+        runtime: WorkerBrowserRuntime | None = None,
     ) -> None:
         path = Path(storage_state_path)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        if runtime is not None:
+            async with runtime.open_session() as session:
+                provider = provider_class(session.page, provider_config=provider_config)
+                logger.info(
+                    "Bootstrapping provider auth via Google",
+                    model=model,
+                    provider_id=provider_class.provider_id,
+                )
+                await provider.navigate_to_chat()
+                logger.info("Provider page opened; starting Google login", model=model)
+                google_page = await provider.begin_google_login()
+                logger.info("Google login page acquired", model=model, current_url=google_page.url)
+                await self._complete_google_login(google_page, credentials)
+                logger.info("Google credentials submitted", model=model)
+                await provider.wait_for_authenticated_ready()
+                logger.info("Provider became ready after login", model=model)
+                await session.context.storage_state(path=str(path))
+                logger.info("Saved provider storage state", model=model, path=str(path))
+            return
 
         playwright = await async_playwright().start()
         browser = None
@@ -225,9 +257,27 @@ class AuthBootstrapper:
         provider_config: dict,
         credentials: ProviderCredentials,
         storage_state_path: str,
+        runtime: WorkerBrowserRuntime | None = None,
     ) -> None:
         path = Path(storage_state_path)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        if runtime is not None:
+            async with runtime.open_session() as session:
+                provider = provider_class(session.page, provider_config=provider_config)
+                logger.info(
+                    "Bootstrapping provider auth via credentials file",
+                    model=model,
+                    provider_id=provider_class.provider_id,
+                )
+                await provider.navigate_to_chat()
+                await provider.authenticate_with_credentials(
+                    {"email": credentials.email, "password": credentials.password}
+                )
+                await provider.wait_for_authenticated_ready()
+                await session.context.storage_state(path=str(path))
+                logger.info("Saved provider storage state", model=model, path=str(path))
+            return
 
         playwright = await async_playwright().start()
         browser = None

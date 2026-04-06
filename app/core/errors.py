@@ -95,3 +95,13 @@ class ServiceUnavailableError(APIError):
             error_type="service_unavailable",
             details=details,
         )
+
+
+class GatewayTimeoutError(APIError):
+    def __init__(self, message: str, details: Optional[dict[str, Any]] = None):
+        super().__init__(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            message=message,
+            error_type="request_timeout",
+            details=details,
+        )

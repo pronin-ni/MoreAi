@@ -1,5 +1,7 @@
 import app.browser.providers  # noqa: F401
+import app.agents.opencode.provider  # noqa: F401
 
+from app.agents.registry import registry as agent_registry
 from app.browser.registry import registry as browser_registry
 from app.integrations.registry import api_registry
 from app.integrations.types import ResolvedModel
@@ -8,9 +10,14 @@ from app.integrations.types import ResolvedModel
 class UnifiedRegistry:
     async def initialize(self) -> None:
         await api_registry.initialize()
+        await agent_registry.initialize()
 
     def list_models(self) -> list[dict]:
-        return browser_registry.list_models() + api_registry.list_models()
+        return (
+            browser_registry.list_models()
+            + api_registry.list_models()
+            + agent_registry.list_models()
+        )
 
     def resolve_model(self, model_name: str) -> ResolvedModel:
         if browser_registry.can_resolve_model(model_name):
@@ -24,6 +31,18 @@ class UnifiedRegistry:
                 source_type="browser",
                 execution_strategy="browser_completion",
             )
+
+        if agent_registry.can_resolve_model(model_name):
+            resolved = agent_registry.resolve_model(model_name)
+            return ResolvedModel(
+                requested_id=resolved["requested_id"],
+                canonical_id=resolved["canonical_id"],
+                provider_id=resolved["provider_id"],
+                transport=resolved["transport"],
+                source_type=resolved["source_type"],
+                execution_strategy=resolved["execution_strategy"],
+            )
+
         return api_registry.resolve_model(model_name)
 
     def diagnostics(self) -> dict:
@@ -32,12 +51,15 @@ class UnifiedRegistry:
             "browser": browser_models,
             "api_integrations": api_registry.diagnostics(),
             "api_models": api_registry.discovered_models(),
+            "agent_providers": agent_registry.diagnostics(),
+            "agent_models": agent_registry.list_models(),
         }
 
     def model_names(self) -> list[str]:
         browser_names = [item["id"] for item in browser_registry.list_models()]
         browser_names.extend(browser_registry.available_model_names())
         browser_names.extend(api_registry.discovered_models())
+        browser_names.extend(agent_registry.list_models())
         return sorted(set(browser_names))
 
 

@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 
+from app.browser.execution.dispatcher import browser_dispatcher
+from app.core.errors import APIError, BadRequestError, InternalError
+from app.core.logging import bind_request_id, clear_request_id, get_logger
+from app.registry.unified import unified_registry
 from app.schemas.openai import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -10,9 +13,6 @@ from app.schemas.openai import (
 )
 from app.services.chat_proxy_service import service
 from app.utils.openai_mapper import create_model_list
-from app.core.logging import get_logger, bind_request_id, clear_request_id
-from app.core.errors import APIError, BadRequestError, InternalError
-from app.registry.unified import unified_registry
 
 logger = get_logger(__name__)
 
@@ -33,7 +33,9 @@ async def list_models() -> ModelList:
 @router.get("/diagnostics/integrations")
 async def list_integrations_diagnostics() -> dict:
     logger.info("Listing integration diagnostics")
-    return unified_registry.diagnostics()
+    diagnostics = unified_registry.diagnostics()
+    diagnostics["browser_execution"] = browser_dispatcher.diagnostics()
+    return diagnostics
 
 
 @router.get("/diagnostics/models")
@@ -49,6 +51,7 @@ async def list_models_diagnostics() -> dict:
         400: {"model": ErrorResponse, "description": "Bad request error"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
         503: {"model": ErrorResponse, "description": "Service unavailable"},
+        504: {"model": ErrorResponse, "description": "Gateway timeout"},
     },
 )
 async def create_chat_completion(
@@ -92,6 +95,6 @@ async def create_chat_completion(
         raise InternalError(
             f"Internal server error: {str(e)}",
             details={"request_id": request_id},
-        )
+        ) from e
     finally:
         clear_request_id()

@@ -1,18 +1,21 @@
-{% if error_message %}
-<div class="message message-assistant error-message" id="chat-messages">
-    <div class="message-header">
-        <span class="message-role">Error</span>
-    </div>
-    <div class="message-content error-content">
-        {{ error_message }}
-    </div>
-</div>
-{% elif last_response %}
 <div id="chat-messages" hx-swap-oob="innerHTML">
-    {% include "partials/chat_messages.html" %}
+    {% if messages %}
+        {% include "partials/chat_messages.html" %}
+    {% else %}
+    <div class="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+        </svg>
+        <h3>Start a conversation</h3>
+        <p>Select a model from the sidebar and send a message to begin.</p>
+    </div>
+    {% endif %}
 </div>
-{% endif %}
 
-<div id="diagnostics-panel" hx-swap-oob="innerHTML">
+<div id="diagnostics-content-target" hx-swap-oob="innerHTML">
     {% include "partials/diagnostics.html" %}
 </div>
+
+<input type="hidden" id="conversation-json-input" name="conversation_json" value="{{ conversation_json|default('[]')|e }}" hx-swap-oob="outerHTML">
+
+<div class="chat-response-state" data-chat-status="{{ last_status }}"></div>

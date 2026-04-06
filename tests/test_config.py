@@ -1,5 +1,6 @@
 import pytest
 from pydantic import ValidationError
+
 from app.core.config import BrowserSettings, Settings
 
 
@@ -27,6 +28,13 @@ class TestSettings:
         assert "qwen.ai" in settings.internal_chat_url
         assert settings.headless is True
         assert settings.browser_pool_size == 5
+        assert settings.browser_queue_max_size == 20
+        assert settings.browser_enqueue_timeout_seconds == 2
+        assert settings.browser_queue_wait_timeout_seconds == 30
+        assert settings.browser_task_execution_timeout_seconds == 120
+        assert settings.browser_provider_circuit_failure_threshold == 3
+        assert settings.browser_provider_circuit_open_seconds == 30
+        assert settings.browser_provider_adaptive_cooldown_seconds == 0.25
         assert settings.response_timeout_seconds == 120
         assert settings.kimi.url == "https://www.kimi.com/"
         assert settings.deepseek.url == "https://chat.deepseek.com/sign_in"
