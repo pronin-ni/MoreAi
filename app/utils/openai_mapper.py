@@ -42,24 +42,49 @@ def create_completion_response(
 
 
 def create_model_list() -> ModelList:
+    from app.admin.config_manager import config_manager
     from app.registry.unified import unified_registry
 
     models = unified_registry.list_models()
+    overrides = config_manager.overrides.models
 
-    return ModelList(
-        object="list",
-        data=[
+    filtered_models = []
+    for m in models:
+        model_id = m["id"]
+        enabled = m.get("enabled", True)
+        available = m.get("available", True)
+
+        # Apply visibility override
+        override = overrides.get(model_id)
+        if override:
+            if override.enabled is not None:
+                enabled = override.enabled
+            if override.visibility is not None and override.visibility == "hidden":
+                continue
+
+        # Skip disabled models
+        if not enabled:
+            continue
+
+        # Skip unavailable models
+        if not available:
+            continue
+
+        filtered_models.append(
             Model(
-                id=m["id"],
+                id=model_id,
                 object="model",
                 created=int(time.time()),
                 owned_by=m["provider_id"],
                 provider_id=m["provider_id"],
                 transport=m["transport"],
                 source_type=m["source_type"],
-                enabled=m.get("enabled", True),
-                available=m.get("available", True),
+                enabled=enabled,
+                available=available,
             )
-            for m in models
-        ],
+        )
+
+    return ModelList(
+        object="list",
+        data=filtered_models,
     )

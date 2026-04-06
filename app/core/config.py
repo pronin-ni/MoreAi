@@ -137,6 +137,9 @@ class Settings(BaseSettings):
     integrations_rate_limit_cooldown_seconds: int = Field(default=60, ge=1)
     g4f_api_key: str | None = Field(default=None)
 
+    # Admin
+    admin_token: str | None = Field(default=None, description="Admin API auth token")
+
     artifacts_dir: str = Field(default="./artifacts")
 
     app_host: str = Field(default="0.0.0.0")

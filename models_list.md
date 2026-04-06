@@ -1,0 +1,75 @@
+- generic [ref=e13]:
+  - banner [ref=e14]:
+    - heading "MoreAI Admin" [level=1] [ref=e15]
+    - navigation [ref=e16]:
+      - button "Overview" [ref=e17] [cursor=pointer]
+      - button "Providers" [ref=e18] [cursor=pointer]
+      - button "Models" [ref=e19] [cursor=pointer]
+      - button "Actions" [ref=e20] [cursor=pointer]
+      - button "Config" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - button "↻ Refresh" [ref=e23] [cursor=pointer]
+      - button "Sign Out" [ref=e24] [cursor=pointer]
+  - main [ref=e25]:
+    - generic [ref=e50]:
+      - heading "Models 6 / 355" [level=3] [ref=e1866]:
+        - text: Models
+        - generic [ref=e52]: 6 / 355
+      - generic [ref=e53]:
+        - textbox "Search models..." [active] [ref=e54]: browser/
+        - combobox [ref=e55]:
+          - option "All Transports" [selected]
+          - option "Browser"
+          - option "API"
+          - option "Agent"
+      - table [ref=e57]:
+        - rowgroup [ref=e58]:
+          - row "Model ID Transport Provider Enabled Available" [ref=e59]:
+            - columnheader "Model ID" [ref=e60]
+            - columnheader "Transport" [ref=e61]
+            - columnheader "Provider" [ref=e62]
+            - columnheader "Enabled" [ref=e63]
+            - columnheader "Available" [ref=e64]
+        - rowgroup [ref=e65]:
+          - row "browser/chatgpt browser chatgpt Yes Yes" [ref=e1867]:
+            - cell "browser/chatgpt" [ref=e1868]
+            - cell "browser" [ref=e1869]:
+              - generic [ref=e1870]: browser
+            - cell "chatgpt" [ref=e1871]
+            - cell "Yes" [ref=e1872]: "Yes"
+            - cell "Yes" [ref=e1874]: "Yes"
+          - row "browser/deepseek browser deepseek Yes Yes" [ref=e1876]:
+            - cell "browser/deepseek" [ref=e1877]
+            - cell "browser" [ref=e1878]:
+              - generic [ref=e1879]: browser
+            - cell "deepseek" [ref=e1880]
+            - cell "Yes" [ref=e1881]: "Yes"
+            - cell "Yes" [ref=e1883]: "Yes"
+          - row "browser/glm browser glm Yes Yes" [ref=e1885]:
+            - cell "browser/glm" [ref=e1886]
+            - cell "browser" [ref=e1887]:
+              - generic [ref=e1888]: browser
+            - cell "glm" [ref=e1889]
+            - cell "Yes" [ref=e1890]: "Yes"
+            - cell "Yes" [ref=e1892]: "Yes"
+          - row "browser/kimi browser kimi Yes Yes" [ref=e1894]:
+            - cell "browser/kimi" [ref=e1895]
+            - cell "browser" [ref=e1896]:
+              - generic [ref=e1897]: browser
+            - cell "kimi" [ref=e1898]
+            - cell "Yes" [ref=e1899]: "Yes"
+            - cell "Yes" [ref=e1901]: "Yes"
+          - row "browser/qwen browser qwen Yes Yes" [ref=e1903]:
+            - cell "browser/qwen" [ref=e1904]
+            - cell "browser" [ref=e1905]:
+              - generic [ref=e1906]: browser
+            - cell "qwen" [ref=e1907]
+            - cell "Yes" [ref=e1908]: "Yes"
+            - cell "Yes" [ref=e1910]: "Yes"
+          - row "browser/yandex browser yandex Yes Yes" [ref=e1912]:
+            - cell "browser/yandex" [ref=e1913]
+            - cell "browser" [ref=e1914]:
+              - generic [ref=e1915]: browser
+            - cell "yandex" [ref=e1916]
+            - cell "Yes" [ref=e1917]: "Yes"
+            - cell "Yes" [ref=e1919]: "Yes"

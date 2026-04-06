@@ -7,12 +7,17 @@ from fastapi.staticfiles import StaticFiles
 
 import app.agents.opencode.provider  # noqa: F401
 import app.browser.providers  # noqa: F401
+from app.admin.config_manager import config_manager
+from app.admin.observer import observer
+from app.admin.router import router as admin_router
 from app.api.routes_openai import router as openai_router
 from app.api.routes_ui import router as ui_router
 from app.browser.execution.dispatcher import browser_dispatcher
+from app.browser.registry import registry as browser_registry
 from app.core.config import settings
 from app.core.errors import APIError
 from app.core.logging import configure_logging, get_logger
+from app.integrations.registry import api_registry
 from app.registry.unified import unified_registry
 
 configure_logging(settings.log_level)
@@ -29,14 +34,36 @@ async def lifespan(app: FastAPI):
     await unified_registry.initialize()
     logger.info("Unified registry initialized")
 
+    # Register known providers/models with config manager for validation
+    known_providers = set(browser_registry._providers) | set(api_registry._adapters) | {"opencode"}
+    known_models = set()
+    for m in unified_registry.list_models():
+        known_models.add(m["id"])
+    config_manager.register_known_providers(known_providers)
+    config_manager.register_known_models(known_models)
+    logger.info(
+        "Config manager registered known providers/models",
+        providers=len(known_providers),
+        models=len(known_models),
+    )
+
+    # Start admin observer (background task for config change propagation)
+    await observer.start()
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
+
+    # Stop admin observer
+    await observer.stop()
+    logger.info("Admin observer stopped")
+
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")
 
     # Shutdown managed OpenCode subprocess
     from app.agents.opencode.provider import provider as opencode_provider
+
     await opencode_provider.shutdown()
     logger.info("OpenCode provider shutdown complete")
 
@@ -71,6 +98,7 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
 
 app.include_router(openai_router)
 app.include_router(ui_router)
+app.include_router(admin_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 

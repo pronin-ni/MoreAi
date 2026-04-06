@@ -29,10 +29,29 @@ class ModelViewModel:
 
 class ModelRegistryService:
     def list_models(self) -> list[ModelViewModel]:
+        from app.admin.config_manager import config_manager
+
         raw_models = unified_registry.list_models()
+        overrides = config_manager.overrides.models
         result = []
+        
         for m in raw_models:
             model_id = m["id"]
+
+            # Apply admin overrides
+            override = overrides.get(model_id)
+            enabled = m.get("enabled", True)
+            visibility = "public"
+            
+            if override:
+                if override.enabled is not None:
+                    enabled = override.enabled
+                if override.visibility is not None:
+                    visibility = override.visibility
+
+            # Skip hidden models
+            if visibility == "hidden":
+                continue
 
             display_name = model_id.split("/", 1)[-1].replace("-", " ").title()
             provider_id = m.get("provider_id", "")
@@ -66,7 +85,7 @@ class ModelRegistryService:
                     provider_id=provider_id,
                     transport=m.get("transport", "unknown"),
                     source_type=m.get("source_type", "unknown"),
-                    enabled=m.get("enabled", True),
+                    enabled=enabled,
                     available=m.get("available", True),
                     aliases=aliases,
                 )

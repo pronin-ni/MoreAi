@@ -50,3 +50,6 @@ artifacts/*.html
 
 artifacts
 .playwright-mcp
+.qwen
+opencode.json
+RoadMap
