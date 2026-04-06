@@ -201,7 +201,15 @@
                     <pre id="recent-failures-json" class="json-display">Loading...</pre>
                 </div>
                 <div class="card mt-md">
-                    <h3 class="card-title">Routing Decisions</h3>
+                    <h3 class="card-title">Routing Plan Lookup</h3>
+                    <div class="search-bar" style="margin-bottom:0">
+                        <input type="text" id="routing-plan-model" class="form-input" placeholder="Model ID (e.g. browser/qwen)">
+                        <button class="btn-sm btn-secondary" onclick="window.__admin.lookupRoutingPlan()">Lookup</button>
+                    </div>
+                    <pre id="routing-plan-json" class="json-display" style="margin-top:var(--space-sm)">Enter a model ID and click Lookup</pre>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Recent Routing Decisions</h3>
                     <pre id="routing-decisions-json" class="json-display">Loading...</pre>
                 </div>
             </div>

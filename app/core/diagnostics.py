@@ -223,19 +223,20 @@ def get_worker_pool_state() -> dict[str, Any]:
     """Browser worker pool state."""
     try:
         from app.browser.execution.dispatcher import browser_dispatcher
-        snapshot = browser_dispatcher.get_health_snapshot()
+        snapshot = browser_dispatcher.diagnostics()
         return {
-            "active_workers": snapshot.active_workers,
-            "total_workers": snapshot.total_workers,
-            "queue_size": snapshot.queue_size,
-            "queue_capacity": snapshot.queue_capacity,
-            "in_flight": snapshot.in_flight,
-            "completed_jobs": snapshot.completed_jobs,
-            "failed_jobs": snapshot.failed_jobs,
-            "cancelled_jobs": snapshot.cancelled_jobs,
-            "retry_count": snapshot.retry_count,
-            "worker_restart_count": snapshot.worker_restart_count,
-            "queue_oldest_age_seconds": snapshot.queue_oldest_age_seconds,
+            "active_workers": snapshot.get("active_workers"),
+            "total_workers": snapshot.get("worker_pool_size"),
+            "queue_size": snapshot.get("queue_size"),
+            "queue_capacity": snapshot.get("queue_capacity"),
+            "in_flight": snapshot.get("in_flight"),
+            "completed_jobs": snapshot.get("completed_jobs"),
+            "failed_jobs": snapshot.get("failed_jobs"),
+            "cancelled_jobs": snapshot.get("cancelled_jobs"),
+            "retry_count": snapshot.get("retry_count"),
+            "worker_restart_count": snapshot.get("worker_restart_count"),
+            "queue_oldest_age_seconds": snapshot.get("queue_oldest_age_seconds"),
+            "state": snapshot.get("state"),
         }
     except Exception as exc:
         return {"error": str(exc)}
@@ -283,8 +284,8 @@ def get_degraded_components() -> list[str]:
     # Browser dispatcher
     try:
         from app.browser.execution.dispatcher import browser_dispatcher
-        snapshot = browser_dispatcher.get_health_snapshot()
-        if snapshot.active_workers == 0:
+        snapshot = browser_dispatcher.diagnostics()
+        if snapshot.get("active_workers", 0) == 0:
             degraded.append("browser_dispatcher: no active workers")
     except Exception as exc:
         degraded.append(f"browser_dispatcher: unavailable ({exc})")
@@ -323,3 +324,14 @@ def get_full_diagnostics() -> dict[str, Any]:
         "recent_routing_decisions": get_recent_routing_decisions(20),
         "generated_at": time.time(),
     }
+
+
+def get_routing_plan(model_id: str) -> dict[str, Any]:
+    """Get the routing plan for a specific model."""
+    try:
+        from app.services.routing_engine import routing_engine
+
+        plan = routing_engine.plan(model_id)
+        return plan.summary()
+    except Exception as exc:
+        return {"error": str(exc)}

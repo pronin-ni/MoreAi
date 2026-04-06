@@ -26,6 +26,7 @@ from app.schemas.openai import (
     ModelList,
 )
 from app.services.chat_proxy_service import service
+from app.services.routing_engine import routing_engine
 from app.utils.openai_mapper import create_model_list
 
 logger = get_logger(__name__)
@@ -186,6 +187,13 @@ async def routing_diagnostics():
     return {
         "recent_decisions": get_recent_routing_decisions(50),
     }
+
+
+@router.get("/diagnostics/routing/plan")
+async def routing_plan(model: str):
+    """Get the routing plan for a specific model — candidates, chain, policy."""
+    plan = routing_engine.plan(model)
+    return plan.summary()
 
 
 @router.get("/diagnostics/failures")

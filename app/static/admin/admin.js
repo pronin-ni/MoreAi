@@ -539,6 +539,22 @@
         }
     }
 
+    window.__admin.lookupRoutingPlan = async () => {
+        const modelInput = document.getElementById('routing-plan-model');
+        const model = modelInput.value.trim();
+        if (!model) return;
+
+        try {
+            const resp = await fetchApi(`/diagnostics/routing/plan?model=${encodeURIComponent(model)}`);
+            const data = await resp.json();
+            document.getElementById('routing-plan-json').textContent =
+                JSON.stringify(data, null, 2);
+        } catch (err) {
+            document.getElementById('routing-plan-json').textContent =
+                `Error: ${err.message}`;
+        }
+    };
+
     // ── Actions ──
     async function loadActions() {
         try {
