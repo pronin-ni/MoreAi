@@ -1,5 +1,5 @@
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.schemas.openai import ChatCompletionResponse, ModelList
 from app.utils.openai_mapper import (
@@ -43,6 +43,10 @@ class TestCreateCompletionResponse:
 
 class TestCreateModelList:
     @patch(
+        "app.admin.config_manager.config_manager",
+        new=MagicMock(overrides=MagicMock(models={})),
+    )
+    @patch(
         "app.registry.unified.unified_registry.list_models",
         return_value=[
             {
@@ -84,6 +88,10 @@ class TestCreateModelList:
         assert "api/ollamafreeapi/llama3.3:70b" in model_ids
 
     @patch(
+        "app.admin.config_manager.config_manager",
+        new=MagicMock(overrides=MagicMock(models={})),
+    )
+    @patch(
         "app.registry.unified.unified_registry.list_models",
         return_value=[
             {
@@ -104,6 +112,10 @@ class TestCreateModelList:
         for model in model_list.data:
             assert before <= model.created <= after
 
+    @patch(
+        "app.admin.config_manager.config_manager",
+        new=MagicMock(overrides=MagicMock(models={})),
+    )
     @patch(
         "app.registry.unified.unified_registry.list_models",
         return_value=[

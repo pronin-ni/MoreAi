@@ -58,22 +58,28 @@
         // Model search/filter
         const searchInput = document.getElementById('models-search');
         const transportFilter = document.getElementById('models-transport-filter');
+        const statusFilter = document.getElementById('models-status-filter');
+        const selectAllCheckbox = document.getElementById('models-select-all');
         searchInput.addEventListener('input', renderModels);
         transportFilter.addEventListener('change', renderModels);
+        statusFilter.addEventListener('change', renderModels);
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', (e) => window.__admin.toggleSelectAll(e.target.checked));
+        }
     }
 
     // ── Auth ──
     function showLogin() {
-        loginScreen.style.display = '';
-        dashboardScreen.style.display = 'none';
+        loginScreen.classList.remove('hidden');
+        dashboardScreen.classList.add('hidden');
         tokenInput.value = '';
-        loginError.style.display = 'none';
+        loginError.classList.add('hidden');
         tokenInput.focus();
     }
 
     function showDashboard() {
-        loginScreen.style.display = 'none';
-        dashboardScreen.style.display = '';
+        loginScreen.classList.add('hidden');
+        dashboardScreen.classList.remove('hidden');
     }
 
     function setToken(token) {
@@ -96,7 +102,7 @@
 
         loginBtn.textContent = 'Signing in...';
         loginBtn.disabled = true;
-        loginError.style.display = 'none';
+        loginError.classList.add('hidden');
 
         // Set token BEFORE making the request so fetchApi uses it
         setToken(token);
@@ -112,7 +118,7 @@
             }
         } catch (err) {
             loginError.textContent = err.message || 'Login failed';
-            loginError.style.display = '';
+            loginError.classList.remove('hidden');
         } finally {
             loginBtn.textContent = 'Sign In';
             loginBtn.disabled = false;
@@ -237,11 +243,15 @@
     };
 
     // ── Models ──
+    let selectedModelIds = new Set();
+
     async function loadModels() {
         try {
             const resp = await fetchApi('/admin/models');
             allModels = await resp.json();
+            selectedModelIds.clear();
             renderModels();
+            updateBulkBar();
         } catch (err) {
             console.error('Failed to load models:', err);
         }
@@ -251,6 +261,7 @@
         const tbody = document.getElementById('models-tbody');
         const search = (document.getElementById('models-search').value || '').toLowerCase();
         const transportFilter = document.getElementById('models-transport-filter').value;
+        const statusFilter = document.getElementById('models-status-filter').value;
 
         let filtered = allModels;
         if (search) {
@@ -262,6 +273,13 @@
         if (transportFilter) {
             filtered = filtered.filter(m => m.transport === transportFilter);
         }
+        if (statusFilter === 'enabled') {
+            filtered = filtered.filter(m => m.enabled);
+        } else if (statusFilter === 'disabled') {
+            filtered = filtered.filter(m => !m.enabled);
+        } else if (statusFilter === 'hidden') {
+            filtered = filtered.filter(m => (m.visibility || 'public') === 'hidden');
+        }
 
         const countBadge = document.getElementById('models-count-badge');
         countBadge.textContent = `${filtered.length} / ${allModels.length}`;
@@ -270,12 +288,14 @@
             const visibility = m.visibility || 'public';
             const visibilityBadgeClass = visibility === 'hidden' ? 'badge-hidden' : 'badge-public';
             const visibilityLabel = visibility.charAt(0).toUpperCase() + visibility.slice(1);
-            
-            // Escape model ID for onclick
             const escapedId = m.id.replace(/'/g, "\\'");
+            const isSelected = selectedModelIds.has(m.id);
 
             return `
-            <tr>
+            <tr class="${isSelected ? 'row-selected' : ''}">
+                <td class="col-checkbox">
+                    <input type="checkbox" class="form-checkbox model-checkbox" value="${escapedId}" ${isSelected ? 'checked' : ''} onchange="window.__admin.toggleSelect('${escapedId}', this.checked)">
+                </td>
                 <td class="model-id" title="${m.id}">${truncate(m.id, 60)}</td>
                 <td><span class="badge-badge badge-${m.transport}">${m.transport}</span></td>
                 <td>${m.provider_id}</td>
@@ -307,10 +327,141 @@
             </tr>
         `}).join('');
 
-        tbody.innerHTML = rows || '<tr><td colspan="7" class="loading-cell">No models match your filters</td></tr>';
+        tbody.innerHTML = rows || '<tr><td colspan="8" class="loading-cell">No models match your filters</td></tr>';
+        updateSelectAllCheckbox();
     }
 
     window.__admin = window.__admin || {};
+
+    window.__admin.toggleSelect = (modelId, checked) => {
+        if (checked) {
+            selectedModelIds.add(modelId);
+        } else {
+            selectedModelIds.delete(modelId);
+        }
+        updateBulkBar();
+        updateSelectAllCheckbox();
+    };
+
+    window.__admin.toggleSelectAll = (checked) => {
+        const search = (document.getElementById('models-search').value || '').toLowerCase();
+        const transportFilter = document.getElementById('models-transport-filter').value;
+        const statusFilter = document.getElementById('models-status-filter').value;
+
+        let filtered = allModels;
+        if (search) {
+            filtered = filtered.filter(m =>
+                m.id.toLowerCase().includes(search) ||
+                m.provider_id.toLowerCase().includes(search)
+            );
+        }
+        if (transportFilter) {
+            filtered = filtered.filter(m => m.transport === transportFilter);
+        }
+        if (statusFilter === 'enabled') {
+            filtered = filtered.filter(m => m.enabled);
+        } else if (statusFilter === 'disabled') {
+            filtered = filtered.filter(m => !m.enabled);
+        } else if (statusFilter === 'hidden') {
+            filtered = filtered.filter(m => (m.visibility || 'public') === 'hidden');
+        }
+
+        const visibleIds = new Set(filtered.slice(0, 200).map(m => m.id));
+
+        if (checked) {
+            visibleIds.forEach(id => selectedModelIds.add(id));
+        } else {
+            visibleIds.forEach(id => selectedModelIds.delete(id));
+        }
+
+        renderModels();
+        updateBulkBar();
+    };
+
+    window.__admin.clearSelection = () => {
+        selectedModelIds.clear();
+        renderModels();
+        updateBulkBar();
+    };
+
+    function updateBulkBar() {
+        const bulkBar = document.getElementById('models-bulk-bar');
+        const bulkCount = document.getElementById('models-bulk-count');
+
+        if (selectedModelIds.size > 0) {
+            bulkBar.classList.remove('hidden');
+            bulkCount.textContent = `${selectedModelIds.size} selected`;
+        } else {
+            bulkBar.classList.add('hidden');
+            bulkCount.textContent = '0 selected';
+        }
+    }
+
+    function updateSelectAllCheckbox() {
+        const checkbox = document.getElementById('models-select-all');
+        if (!checkbox) return;
+
+        const search = (document.getElementById('models-search').value || '').toLowerCase();
+        const transportFilter = document.getElementById('models-transport-filter').value;
+        const statusFilter = document.getElementById('models-status-filter').value;
+
+        let filtered = allModels;
+        if (search) {
+            filtered = filtered.filter(m =>
+                m.id.toLowerCase().includes(search) ||
+                m.provider_id.toLowerCase().includes(search)
+            );
+        }
+        if (transportFilter) {
+            filtered = filtered.filter(m => m.transport === transportFilter);
+        }
+        if (statusFilter === 'enabled') {
+            filtered = filtered.filter(m => m.enabled);
+        } else if (statusFilter === 'disabled') {
+            filtered = filtered.filter(m => !m.enabled);
+        } else if (statusFilter === 'hidden') {
+            filtered = filtered.filter(m => (m.visibility || 'public') === 'hidden');
+        }
+
+        const visibleIds = new Set(filtered.slice(0, 200).map(m => m.id));
+        const selectedVisible = [...visibleIds].filter(id => selectedModelIds.has(id)).length;
+
+        checkbox.checked = visibleIds.size > 0 && selectedVisible === visibleIds.size;
+        checkbox.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.size;
+    }
+
+    window.__admin.bulkAction = async (action) => {
+        if (selectedModelIds.size === 0) return;
+
+        const count = selectedModelIds.size;
+        const actionName = action.charAt(0).toUpperCase() + action.slice(1);
+
+        if (!confirm(`${actionName} ${count} model(s)?`)) return;
+
+        let patch = {};
+        if (action === 'enable') {
+            patch = { enabled: true };
+        } else if (action === 'disable') {
+            patch = { enabled: false };
+        } else if (action === 'hide') {
+            patch = { visibility: 'hidden' };
+        } else if (action === 'show') {
+            patch = { visibility: 'public' };
+        }
+
+        const promises = [...selectedModelIds].map(id =>
+            fetchApi(`/admin/models/${id}`, {
+                method: 'PATCH',
+                body: JSON.stringify(patch),
+            }).catch(err => console.error(`Failed to ${action} ${id}:`, err))
+        );
+
+        await Promise.allSettled(promises);
+        selectedModelIds.clear();
+        await loadModels();
+        await loadStatus();
+    };
+
     window.__admin.toggleModel = async (modelId, newEnabled) => {
         try {
             await fetchApi(`/admin/models/${modelId}`, {
@@ -373,7 +524,7 @@
         if (!confirm(`Execute action "${actionId}"?`)) return;
 
         const resultDiv = document.getElementById('rollback-result');
-        resultDiv.style.display = '';
+        resultDiv.classList.remove('hidden');
         resultDiv.textContent = 'Executing...';
 
         try {
@@ -392,7 +543,7 @@
         if (!confirm('Rollback config to previous version?')) return;
 
         const resultDiv = document.getElementById('rollback-result');
-        resultDiv.style.display = '';
+        resultDiv.classList.remove('hidden');
         resultDiv.textContent = 'Rolling back...';
 
         try {
