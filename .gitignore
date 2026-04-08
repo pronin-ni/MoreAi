@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -18,42 +19,88 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.tox/
-.env
-secrets/*.json
-!secrets/.gitkeep
-!secrets/browser_auth.example.json
-.venv
+# Virtual environments
+.venv/
 env/
 venv/
 ENV/
 
+# Dependencies
+uv.lock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+*.sublime-*
 
+# Testing
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Playwright & browser
 .playwright/
+.playwright-mcp/
 playwright/.cache/
 playwright/browsers/
+browser-artifacts/
 
-artifacts/*.png
-artifacts/*.html
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets
+secrets/*.json
+!secrets/.gitkeep
+!secrets/browser_auth.example.json
+
+# Artifacts
+artifacts/
 !artifacts/.gitkeep
 
+# Logs
 *.log
+logs/
 
+# Data
 data/*.db
-app/data/*.db
 
-.playwright-mcp
-.qwen
+# OpenCode
 opencode.json
+
+# Qwen Code
+.qwen/
+
+# Local documentation
+about_project
 RoadMap
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
