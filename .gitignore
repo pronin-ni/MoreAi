@@ -20,6 +20,8 @@ wheels/
 *.egg
 
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
@@ -48,7 +50,9 @@ artifacts/*.html
 
 *.log
 
-artifacts
+data/*.db
+app/data/*.db
+
 .playwright-mcp
 .qwen
 opencode.json
