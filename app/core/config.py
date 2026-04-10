@@ -121,6 +121,17 @@ class OpenCodeSettings(BaseSettings):
     required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
 
 
+class PipelineSettings(BaseSettings):
+    """Pipeline orchestration configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="PIPELINE_", extra="ignore")
+
+    enabled: bool = Field(default=True, description="Enable pipeline execution")
+    max_stages: int = Field(default=3, ge=1, le=5, description="Max stages per pipeline")
+    max_total_time_ms: int = Field(default=180_000, ge=10_000, description="Max total pipeline execution time")
+    max_stage_retries: int = Field(default=1, ge=0, le=3, description="Default max retries per stage")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -173,6 +184,7 @@ class Settings(BaseSettings):
     opencode: OpenCodeSettings = Field(default_factory=OpenCodeSettings)
     google_auth: GoogleAuthSettings = Field(default_factory=GoogleAuthSettings)
     recon: ReconSettings = Field(default_factory=ReconSettings)
+    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -196,6 +208,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "google_auth", GoogleAuthSettings())
         if "recon" not in kwargs:
             object.__setattr__(self, "recon", ReconSettings())
+        if "pipeline" not in kwargs:
+            object.__setattr__(self, "pipeline", PipelineSettings())
 
 
 settings = Settings()

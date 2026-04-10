@@ -155,6 +155,7 @@
             loadModels(),
             loadActions(),
             loadEffectiveConfig(),
+            loadPipelineData(),
         ]);
     }
 
@@ -671,6 +672,10 @@
             loadBaseline();
         } else if (tabName === 'Maintenance') {
             loadMaintenance();
+        } else if (tabName === 'Pipelines') {
+            loadPipelineData();
+        } else if (tabName === 'Scoring') {
+            loadScoringData();
         }
     }
 
@@ -1328,4 +1333,336 @@
             }
         }
     });
+
+    // ── Pipelines Tab ──
+
+    async function loadPipelineData() {
+        const [definitions, stats, executions] = await Promise.all([
+            fetchApi('/admin/pipelines'),
+            fetchApi('/admin/pipelines/stats'),
+            fetchApi('/admin/pipelines/executions?limit=50'),
+        ]);
+
+        // Update overview cards
+        document.getElementById('pl-stat-total').textContent = definitions.total;
+        document.getElementById('pl-stat-enabled').textContent = definitions.pipelines.filter(p => p.enabled).length;
+        document.getElementById('pl-stat-executions').textContent = executions.total;
+
+        // Calculate overall success rate
+        const totalExecutions = Object.values(stats.stats || {}).reduce((sum, s) => sum + s.executions, 0);
+        const totalSuccess = Object.values(stats.stats || {}).reduce((sum, s) => sum + s.success_count, 0);
+        const rate = totalExecutions > 0 ? Math.round(totalSuccess / totalExecutions * 100) + '%' : '—';
+        document.getElementById('pl-stat-success').textContent = rate;
+
+        // Populate pipeline filter dropdown
+        const filterSelect = document.getElementById('pl-exec-pipeline-filter');
+        const currentFilter = filterSelect.value;
+        filterSelect.innerHTML = '<option value="">All Pipelines</option>';
+        definitions.pipelines.forEach(p => {
+            filterSelect.innerHTML += `<option value="${p.pipeline_id}" ${currentFilter === p.pipeline_id ? 'selected' : ''}>${p.pipeline_id}</option>`;
+        });
+
+        renderPipelineDefinitions(definitions.pipelines, stats.stats);
+        renderRecentExecutions(executions.executions);
+    }
+
+    function renderPipelineDefinitions(pipelines, stats) {
+        const tbody = document.getElementById('pl-definitions-tbody');
+        if (!pipelines.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="padding: 1rem; text-align: center;">No pipelines found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = pipelines.map(p => {
+            const s = stats[p.pipeline_id] || {};
+            const successRate = s.executions > 0 ? Math.round(s.success_rate * 100) + '%' : '—';
+            const avgDuration = s.avg_latency_ms ? Math.round(s.avg_latency_ms) + 'ms' : '—';
+
+            return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                <td style="padding: 0.5rem; font-family: var(--admin-font-mono); font-size: 0.75rem;">${p.pipeline_id}</td>
+                <td style="padding: 0.5rem;">${p.display_name}</td>
+                <td style="padding: 0.5rem; text-align: center;">${p.stage_count}</td>
+                <td style="padding: 0.5rem; text-align: center;">
+                    <span class="badge ${p.enabled ? 'badge-green' : 'badge-gray'}">${p.enabled ? 'enabled' : 'disabled'}</span>
+                </td>
+                <td style="padding: 0.5rem; text-align: center;">${successRate}</td>
+                <td style="padding: 0.5rem; text-align: center;">${avgDuration}</td>
+                <td style="padding: 0.5rem; text-align: center;">
+                    <button class="btn-secondary" onclick="inspectPipeline('${p.pipeline_id}')" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Inspect</button>
+                    ${p.enabled
+                        ? `<button class="btn-danger" onclick="togglePipeline('${p.pipeline_id}', false)" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Disable</button>`
+                        : `<button class="btn-success" onclick="togglePipeline('${p.pipeline_id}', true)" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Enable</button>`
+                    }
+                    <button class="btn-secondary" onclick="runPipelineTest('${p.pipeline_id}')" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Test</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function renderRecentExecutions(executions) {
+        const tbody = document.getElementById('pl-executions-tbody');
+        if (!executions || !executions.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="padding: 1rem; text-align: center;">No executions yet</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = executions.map(e => {
+            const statusBadge = e.status === 'success' ? 'badge-green' : e.status === 'failed' ? 'badge-red' : 'badge-yellow';
+            const stagesStr = `${e.stages_completed}/${e.stage_count}`;
+
+            return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                <td style="padding: 0.5rem; font-family: var(--admin-font-mono); font-size: 0.7rem;">${e.execution_id}</td>
+                <td style="padding: 0.5rem; font-family: var(--admin-font-mono); font-size: 0.75rem;">${e.pipeline_id}</td>
+                <td style="padding: 0.5rem; text-align: center;">
+                    <span class="badge ${statusBadge}">${e.status}</span>
+                </td>
+                <td style="padding: 0.5rem; text-align: center;">${Math.round(e.duration_ms)}ms</td>
+                <td style="padding: 0.5rem; text-align: center;">${stagesStr}</td>
+                <td style="padding: 0.5rem; text-align: center;">${e.total_fallbacks || 0}</td>
+                <td style="padding: 0.5rem; text-align: center;">
+                    <button class="btn-secondary" onclick="viewExecutionTrace('${e.execution_id}')" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Trace</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    window.loadPipelineDefinitions = async function() {
+        try {
+            await loadPipelineData();
+        } catch (err) {
+            console.error('Failed to load pipeline definitions:', err);
+            document.getElementById('pl-definitions-tbody').innerHTML =
+                `<tr><td colspan="7" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${err.message}</td></tr>`;
+        }
+    };
+
+    window.loadRecentExecutions = async function() {
+        const pipelineId = document.getElementById('pl-exec-pipeline-filter').value;
+        const status = document.getElementById('pl-exec-status-filter').value;
+
+        try {
+            const params = new URLSearchParams({ limit: '50' });
+            if (pipelineId) params.set('pipeline_id', pipelineId);
+            if (status) params.set('status', status);
+
+            const data = await fetchApi(`/admin/pipelines/executions?${params}`);
+            renderRecentExecutions(data.executions);
+        } catch (err) {
+            console.error('Failed to load executions:', err);
+            document.getElementById('pl-executions-tbody').innerHTML =
+                `<tr><td colspan="7" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${err.message}</td></tr>`;
+        }
+    };
+
+    window.togglePipeline = async function(pipelineId, enabled) {
+        try {
+            const endpoint = enabled ? 'enable' : 'disable';
+            await fetchApi(`/admin/pipelines/${pipelineId}/${endpoint}`, { method: 'POST' });
+            await loadPipelineData();
+        } catch (err) {
+            alert(`Failed to ${enabled ? 'enable' : 'disable'} pipeline: ${err.message}`);
+        }
+    };
+
+    window.inspectPipeline = async function(pipelineId) {
+        try {
+            const data = await fetchApi(`/admin/pipelines/${pipelineId}`);
+            const content = document.createElement('div');
+            content.style.cssText = 'font-size: 0.8rem; font-family: var(--admin-font-mono);';
+            content.innerHTML = `
+                <div style="margin-bottom: 1rem;">
+                    <strong>Pipeline:</strong> ${data.pipeline_id}<br>
+                    <strong>Display Name:</strong> ${data.display_name}<br>
+                    <strong>Model ID:</strong> ${data.model_id}<br>
+                    <strong>Description:</strong> ${data.description || '—'}<br>
+                    <strong>Enabled:</strong> ${data.enabled ? 'Yes' : 'No'}<br>
+                    <strong>Max Total Time:</strong> ${data.max_total_time_ms}ms<br>
+                    <strong>Max Stage Retries:</strong> ${data.max_stage_retries}
+                </div>
+                <h4 style="margin: 1rem 0 0.5rem;">Stages:</h4>
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--admin-border);">
+                            <th style="padding: 0.3rem; text-align: left;">Stage ID</th>
+                            <th style="padding: 0.3rem; text-align: left;">Role</th>
+                            <th style="padding: 0.3rem; text-align: left;">Target Model</th>
+                            <th style="padding: 0.3rem; text-align: left;">Failure Policy</th>
+                            <th style="padding: 0.3rem; text-align: left;">Retries</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.stages.map(s => `<tr style="border-bottom: 1px solid var(--admin-border);">
+                            <td style="padding: 0.3rem;">${s.stage_id}</td>
+                            <td style="padding: 0.3rem;">${s.role}</td>
+                            <td style="padding: 0.3rem;">${s.target_model || '(intelligent selection)'}</td>
+                            <td style="padding: 0.3rem;">${s.failure_policy}</td>
+                            <td style="padding: 0.3rem;">${s.max_retries}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById('pl-trace-content').innerHTML = '';
+            document.getElementById('pl-trace-content').appendChild(content);
+            document.getElementById('pl-trace-modal').classList.remove('hidden');
+        } catch (err) {
+            alert(`Failed to inspect pipeline: ${err.message}`);
+        }
+    };
+
+    window.runPipelineTest = async function(pipelineId) {
+        const prompt = prompt('Enter test prompt (or leave empty for default):');
+        if (prompt === null) return;
+
+        try {
+            const body = prompt ? { prompt } : undefined;
+            const data = await fetchApi(`/admin/pipelines/${pipelineId}/run-test`, {
+                method: 'POST',
+                body: body ? JSON.stringify(body) : undefined,
+            });
+
+            alert(`Pipeline test ${data.status}\nDuration: ${data.duration_ms}ms\nOutput: ${data.output_preview || data.error}`);
+            // Refresh executions
+            await loadRecentExecutions();
+        } catch (err) {
+            alert(`Test execution failed: ${err.message}`);
+        }
+    };
+
+    window.viewExecutionTrace = async function(executionId) {
+        try {
+            const data = await fetchApi(`/admin/pipelines/executions/${executionId}`);
+            renderExecutionTrace(data);
+            document.getElementById('pl-trace-modal').classList.remove('hidden');
+        } catch (err) {
+            alert(`Failed to load execution trace: ${err.message}`);
+        }
+    };
+
+    function renderExecutionTrace(data) {
+        const container = document.getElementById('pl-trace-content');
+        const statusBadge = data.status === 'success' ? 'badge-green' : data.status === 'failed' ? 'badge-red' : 'badge-yellow';
+
+        let html = `
+            <div style="margin-bottom: 1rem;">
+                <strong>Execution ID:</strong> <code>${data.execution_id}</code><br>
+                <strong>Pipeline:</strong> ${data.pipeline_display_name || data.pipeline_id}<br>
+                <strong>Status:</strong> <span class="badge ${statusBadge}">${data.status}</span><br>
+                <strong>Duration:</strong> ${Math.round(data.duration_ms)}ms / ${data.total_budget_ms}ms (${data.budget_consumed_pct}%)<br>
+                <strong>Stages:</strong> ${data.stages_completed}/${data.stage_count}<br>
+                <strong>Retries:</strong> ${data.total_retries} | <strong>Fallbacks:</strong> ${data.total_fallbacks}
+            </div>
+        `;
+
+        // Stage timeline
+        html += '<h4 style="margin: 1rem 0 0.5rem;">Stage Timeline:</h4>';
+        html += '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
+
+        (data.stages || []).forEach((stage, i) => {
+            const stageStatus = stage.status === 'completed' ? 'badge-green' : stage.status === 'failed' ? 'badge-red' : 'badge-gray';
+            const fallbackBadge = stage.fallback_count > 0 ? `<span class="badge badge-yellow" style="font-size: 0.65rem;">${stage.fallback_count} fallback</span>` : '';
+            const retryBadge = stage.retry_count > 0 ? `<span class="badge badge-blue" style="font-size: 0.65rem;">${stage.retry_count} retry</span>` : '';
+
+            html += `
+                <div style="border: 1px solid var(--admin-border); border-radius: 4px; padding: 0.5rem; font-size: 0.75rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                        <div>
+                            <strong>${i + 1}. ${stage.stage_id}</strong>
+                            <span class="badge" style="font-size: 0.6rem; background: var(--admin-muted); color: var(--admin-text-light); margin-left: 0.3rem;">${stage.stage_role}</span>
+                            <span class="badge ${stageStatus}" style="font-size: 0.6rem; margin-left: 0.3rem;">${stage.status}</span>
+                            ${fallbackBadge} ${retryBadge}
+                        </div>
+                        <div style="font-family: var(--admin-font-mono);">${Math.round(stage.duration_ms)}ms</div>
+                    </div>
+                    <div style="color: var(--admin-text-muted); font-size: 0.7rem;">
+                        Model: ${stage.selected_model || '—'} | Provider: ${stage.selected_provider || '—'}
+                    </div>
+                    ${stage.budget_remaining_ms !== undefined ? `<div style="color: var(--admin-text-muted); font-size: 0.7rem;">Budget remaining: ${Math.round(stage.budget_remaining_ms)}ms</div>` : ''}
+                    ${stage.failure_reason ? `<div style="color: var(--admin-error); font-size: 0.7rem; margin-top: 0.3rem;">Error: ${stage.failure_reason}</div>` : ''}
+                    ${stage.output_summary ? `<details style="margin-top: 0.3rem;"><summary style="cursor: pointer; font-size: 0.7rem; color: var(--admin-text-muted);">Output Summary</summary><pre style="margin: 0.3rem 0 0; font-size: 0.65rem; max-height: 100px; overflow-y: auto; background: var(--admin-bg-secondary); padding: 0.3rem; border-radius: 2px; white-space: pre-wrap;">${escapeHtml(stage.output_summary)}</pre></details>` : ''}
+                </div>
+            `;
+        });
+
+        html += '</div>';
+
+        // Failure analysis
+        if (data.failure_analysis) {
+            const fa = data.failure_analysis;
+            html += `
+                <div style="margin-top: 1rem; border: 1px solid var(--admin-error); border-radius: 4px; padding: 0.5rem; font-size: 0.75rem;">
+                    <h4 style="color: var(--admin-error); margin: 0 0 0.3rem;">Failure Analysis</h4>
+                    <strong>Failed Stage:</strong> ${fa.failed_stage} (${fa.failed_stage_role})<br>
+                    <strong>Root Cause:</strong> ${fa.root_cause}<br>
+                    <strong>Detail:</strong> ${fa.root_cause_detail || '—'}<br>
+                    <strong>Retries:</strong> ${fa.retry_count} | <strong>Fallbacks:</strong> ${fa.fallback_count}<br>
+                    <strong>Candidates Exhausted:</strong> ${fa.candidates_exhausted ? 'Yes' : 'No'}<br>
+                    <strong>Budget Exceeded:</strong> ${fa.budget_exceeded ? 'Yes' : 'No'}
+                </div>
+            `;
+        }
+
+        container.innerHTML = html;
+    }
+
+    window.closeTraceModal = function() {
+        document.getElementById('pl-trace-modal').classList.add('hidden');
+    };
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // ── Scoring Tab ──
+
+    window.loadScoringData = async function() {
+        const role = document.getElementById('scoring-role-select').value;
+        const tbody = document.getElementById('scoring-tbody');
+
+        try {
+            const data = await fetchApi(`/admin/pipelines/stage-scoring?stage_role=${role}`);
+            if (!data.scoring || data.scoring.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="12" style="padding: 1rem; text-align: center;">No scoring data available</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.scoring.map(s => {
+                const scoreBar = renderScoreBar(s.final_score, s.base_static_score, s.dynamic_adjustment, s.failure_penalty);
+                const badges = [];
+                if (s.cold_start) badges.push('<span class="badge badge-gray" style="font-size: 0.6rem;">cold_start</span>');
+                if (s.fallback_heavy) badges.push('<span class="badge badge-yellow" style="font-size: 0.6rem;">fallback_heavy</span>');
+                if (s.top_performer) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">top</span>');
+
+                return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                    <td style="padding: 0.3rem; font-family: var(--admin-font-mono); font-size: 0.7rem;">${s.model_id}</td>
+                    <td style="padding: 0.3rem; font-size: 0.7rem;">${s.provider_id || '—'}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-family: var(--admin-font-mono);">${scoreBar}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${s.base_static_score.toFixed(2)}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${s.dynamic_adjustment > 0 ? 'var(--admin-success)' : s.dynamic_adjustment < 0 ? 'var(--admin-error)' : 'var(--admin-text-muted)'};">${s.dynamic_adjustment >= 0 ? '+' : ''}${s.dynamic_adjustment.toFixed(2)}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${s.failure_penalty > 0 ? 'var(--admin-error)' : 'var(--admin-text-muted)'};">${s.failure_penalty > 0 ? '-' + s.failure_penalty.toFixed(2) : '0.00'}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${(s.success_rate * 100).toFixed(0)}%</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${(s.fallback_rate * 100).toFixed(0)}%</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${s.sample_count}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${(s.data_confidence * 100).toFixed(0)}%</td>
+                    <td style="padding: 0.3rem; text-align: center;">${badges.join(' ') || '—'}</td>
+                    <td style="padding: 0.3rem; font-size: 0.65rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${s.tags.join(', ')}">${s.tags.join(', ') || '—'}</td>
+                </tr>`;
+            }).join('');
+        } catch (err) {
+            console.error('Failed to load scoring:', err);
+            tbody.innerHTML = `<tr><td colspan="12" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${err.message}</td></tr>`;
+        }
+    };
+
+    function renderScoreBar(final, base, dynamic, penalty) {
+        const pct = Math.round(final * 100);
+        const color = final >= 0.7 ? 'var(--admin-success)' : final >= 0.4 ? 'var(--admin-warning)' : 'var(--admin-error)';
+        return `<div style="display: flex; align-items: center; gap: 0.3rem;">
+            <div style="width: 60px; height: 8px; background: var(--admin-bg-secondary); border-radius: 4px; overflow: hidden;">
+                <div style="width: ${pct}%; height: 100%; background: ${color}; border-radius: 4px;"></div>
+            </div>
+            <span style="font-size: 0.7rem; font-weight: 500; min-width: 30px;">${final.toFixed(2)}</span>
+        </div>`;
+    }
 })();

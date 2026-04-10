@@ -5,10 +5,8 @@ Exposes /metrics in Prometheus text format.
 Thread-safe, async-safe, zero external deps.
 """
 
-import time
 import threading
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.logging import get_logger
@@ -99,7 +97,7 @@ class Histogram:
         # Per-label: {labels: {"buckets": {upper: count}, "sum": float, "count": int}}
         self._data: dict[tuple, dict[str, Any]] = defaultdict(
             lambda: {
-                "buckets": {b: 0 for b in self.buckets},
+                "buckets": dict.fromkeys(self.buckets, 0),
                 "sum": 0.0,
                 "count": 0,
             }
@@ -285,4 +283,61 @@ routing_decision_total = metrics.counter(
     "moreai_routing_decisions_total",
     "Routing decision counts",
     label_names=["model", "selected_provider", "routing_rule"],  # routing_rule: default, force, primary, fallback
+)
+
+# Pipeline
+pipeline_executions_total = metrics.counter(
+    "moreai_pipeline_executions_total",
+    "Total number of pipeline executions",
+    label_names=["pipeline_id", "status"],
+)
+
+pipeline_stage_executions_total = metrics.counter(
+    "moreai_pipeline_stage_executions_total",
+    "Total number of stage executions",
+    label_names=["pipeline_id", "stage_id", "stage_role", "target_model", "status"],
+)
+
+pipeline_duration_ms = metrics.histogram(
+    "moreai_pipeline_duration_ms",
+    "Pipeline execution duration in milliseconds",
+    label_names=["pipeline_id", "status"],
+    buckets=(1000.0, 5000.0, 10000.0, 30000.0, 60000.0, 120000.0, 180000.0, float("inf")),
+)
+
+pipeline_stage_duration_ms = metrics.histogram(
+    "moreai_pipeline_stage_duration_ms",
+    "Stage execution duration in milliseconds",
+    label_names=["pipeline_id", "stage_id", "stage_role"],
+    buckets=(1000.0, 5000.0, 10000.0, 30000.0, 60000.0, 120000.0, float("inf")),
+)
+
+pipeline_stage_failures_total = metrics.counter(
+    "moreai_pipeline_stage_failures_total",
+    "Total number of stage failures",
+    label_names=["pipeline_id", "stage_id", "stage_role", "error_type"],
+)
+
+pipeline_retries_total = metrics.counter(
+    "moreai_pipeline_retries_total",
+    "Total number of stage retries",
+    label_names=["pipeline_id", "stage_id"],
+)
+
+pipeline_partial_total = metrics.counter(
+    "moreai_pipeline_partial_total",
+    "Total number of partial pipeline successes (some stages completed, then failed)",
+    label_names=["pipeline_id"],
+)
+
+pipeline_stage_fallback_total = metrics.counter(
+    "moreai_pipeline_stage_fallback_total",
+    "Total number of stage model fallbacks",
+    label_names=["pipeline_id", "stage_id", "from_model", "to_model"],
+)
+
+pipeline_rank_fallback_reason_total = metrics.counter(
+    "moreai_pipeline_ranking_fallback_reason_total",
+    "Total number of ranking fallback reasons",
+    label_names=["pipeline_id", "stage_id", "reason"],
 )

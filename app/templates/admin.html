@@ -56,6 +56,8 @@
                 <button class="nav-tab" data-tab="Baseline">Baseline</button>
                 <button class="nav-tab" data-tab="Maintenance">Maintenance</button>
                 <button class="nav-tab" data-tab="Config">Config</button>
+                <button class="nav-tab" data-tab="Pipelines">Pipelines</button>
+                <button class="nav-tab" data-tab="Scoring">Scoring</button>
             </nav>
             <div class="header-actions">
                 <button id="refresh-btn" class="btn-secondary">↻ Refresh</button>
@@ -704,6 +706,148 @@
                                 <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scoring Tab -->
+            <div id="tab-Scoring" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Stage Scoring Breakdown</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="scoring-role-select" onchange="loadScoringData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="generate">generate</option>
+                                <option value="review">review</option>
+                                <option value="critique">critique</option>
+                                <option value="refine">refine</option>
+                                <option value="verify">verify</option>
+                                <option value="transform">transform</option>
+                            </select>
+                            <button class="btn-secondary" onclick="loadScoringData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Base</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Dynamic</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Penalty</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Samples</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Confidence</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Badges</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Tags</th>
+                                </tr>
+                            </thead>
+                            <tbody id="scoring-tbody">
+                                <tr><td colspan="12" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pipelines Tab -->
+            <div id="tab-Pipelines" class="tab-content">
+                <!-- Overview Cards -->
+                <div class="stats-grid" id="pipeline-stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-total">—</div>
+                        <div class="stat-label">Total Pipelines</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-enabled">—</div>
+                        <div class="stat-label">Enabled</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-executions">—</div>
+                        <div class="stat-label">Recent Executions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-success">—</div>
+                        <div class="stat-label">Success Rate</div>
+                    </div>
+                </div>
+
+                <!-- Pipeline Definitions Table -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">Pipeline Definitions</h3>
+                        <button class="btn-secondary" onclick="loadPipelineDefinitions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Pipeline ID</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Display Name</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Stages</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Success Rate</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Avg Duration</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pl-definitions-tbody">
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Recent Executions Table -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">Recent Executions</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="pl-exec-pipeline-filter" onchange="loadRecentExecutions()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="">All Pipelines</option>
+                            </select>
+                            <select id="pl-exec-status-filter" onchange="loadRecentExecutions()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="">All Status</option>
+                                <option value="success">Success</option>
+                                <option value="failed">Failed</option>
+                                <option value="partial">Partial</option>
+                            </select>
+                            <button class="btn-secondary" onclick="loadRecentExecutions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Execution ID</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Pipeline</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Duration</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Stages</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Fallbacks</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pl-executions-tbody">
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">No executions yet</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Execution Trace Modal -->
+                <div id="pl-trace-modal" class="modal hidden">
+                    <div class="modal-content" style="max-width: 900px; max-height: 80vh; overflow-y: auto;">
+                        <div class="modal-header">
+                            <h3 class="modal-title">Execution Trace</h3>
+                            <button class="modal-close" onclick="closeTraceModal()">×</button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="pl-trace-content"></div>
+                        </div>
                     </div>
                 </div>
             </div>

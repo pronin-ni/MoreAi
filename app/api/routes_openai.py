@@ -4,25 +4,35 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.browser.execution.dispatcher import browser_dispatcher
-from app.core.diagnostics import get_full_diagnostics, get_recent_failures, get_recent_routing_decisions, record_routing_decision
+from app.core.config import settings
+from app.core.diagnostics import (
+    get_full_diagnostics,
+    get_recent_failures,
+    get_recent_routing_decisions,
+)
 from app.core.errors import APIError, BadRequestError, InternalError
 from app.core.health import health_status, live_probe, ready_probe
 from app.core.logging import bind_request_id, clear_request_id, get_logger
 from app.core.metrics import (
     errors_total,
     queue_depth,
-    queue_wait_seconds,
     registry_model_count,
     request_latency,
     requests_total,
+)
+from app.core.metrics import (
     metrics as metrics_registry,
 )
+from app.pipeline.diagnostics import pipeline_diagnostics
+from app.pipeline.executor import pipeline_executor
+from app.pipeline.types import pipeline_registry
 from app.registry.unified import unified_registry
 from app.schemas.openai import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ErrorResponse,
     HealthResponse,
+    Model,
     ModelList,
 )
 from app.services.chat_proxy_service import service
@@ -70,7 +80,25 @@ async def metrics_endpoint():
 @router.get("/v1/models", response_model=ModelList)
 async def list_models() -> ModelList:
     logger.info("Listing available models")
-    return create_model_list()
+    model_list = create_model_list()
+
+    # Append pipeline models if enabled
+    if settings.pipeline.enabled:
+        for pdef in pipeline_registry.list_enabled():
+            model_list.data.append(
+                Model(
+                    id=pdef.model_id,
+                    created=int(time.time()),
+                    owned_by="moreai-pipeline",
+                    pipeline_id=pdef.pipeline_id,
+                    display_name=pdef.display_name,
+                    description=pdef.description,
+                    stage_count=len(pdef.stages),
+                    object="model",
+                ),
+            )
+
+    return model_list
 
 
 @router.get("/diagnostics/integrations")
@@ -113,6 +141,10 @@ async def create_chat_completion(
                 "Streaming is not supported yet. Set stream=false.",
                 details={"stream": True},
             )
+
+        # Check if this is a pipeline model
+        if body.model.startswith("pipeline/") or pipeline_registry.is_pipeline_model(body.model):
+            return await _execute_pipeline(body, request_id, started)
 
         logger.info(
             "Received chat completion request",
@@ -172,6 +204,57 @@ async def create_chat_completion(
         clear_request_id()
 
 
+async def _execute_pipeline(
+    body: ChatCompletionRequest,
+    request_id: str,
+    started: float,
+) -> ChatCompletionResponse:
+    """Execute a pipeline request and return the response."""
+    # Check if pipelines are enabled
+    if not settings.pipeline.enabled:
+        raise BadRequestError(
+            f"Pipeline model '{body.model}' requested but pipeline execution is disabled",
+            details={"model": body.model},
+        )
+
+    # Resolve pipeline definition
+    pipeline_def = (
+        pipeline_registry.get_by_model_id(body.model)
+        or pipeline_registry.get(body.model.removeprefix("pipeline/"))
+    )
+
+    if pipeline_def is None:
+        raise BadRequestError(
+            f"Unknown pipeline model: {body.model}",
+            details={"model": body.model},
+        )
+
+    if not pipeline_def.enabled:
+        raise BadRequestError(
+            f"Pipeline '{pipeline_def.pipeline_id}' is disabled",
+            details={"pipeline_id": pipeline_def.pipeline_id},
+        )
+
+    logger.info(
+        "Executing pipeline",
+        request_id=request_id,
+        pipeline_id=pipeline_def.pipeline_id,
+        model=body.model,
+        message_count=str(len(body.messages)),
+    )
+
+    # Execute the pipeline
+    response = await pipeline_executor.execute(pipeline_def, body, request_id)
+
+    logger.info(
+        "Pipeline execution completed",
+        request_id=request_id,
+        pipeline_id=pipeline_def.pipeline_id,
+    )
+
+    return response
+
+
 # ── Enhanced diagnostics endpoints ──
 
 
@@ -202,3 +285,636 @@ async def recent_failures():
     return {
         "recent_failures": get_recent_failures(20),
     }
+
+
+# ── Pipeline Admin endpoints ──
+
+
+@router.get("/admin/pipelines")
+async def list_pipelines():
+    """List all registered pipelines with basic info."""
+    pipelines = []
+    for pdef in pipeline_registry.list_all():
+        pipelines.append({
+            "pipeline_id": pdef.pipeline_id,
+            "model_id": pdef.model_id,
+            "display_name": pdef.display_name,
+            "description": pdef.description,
+            "enabled": pdef.enabled,
+            "stage_count": len(pdef.stages),
+            "stages": [
+                {
+                    "stage_id": s.stage_id,
+                    "role": s.role.value,
+                    "target_model": s.target_model,
+                    "failure_policy": s.failure_policy.value,
+                    "max_retries": s.max_retries,
+                }
+                for s in pdef.stages
+            ],
+        })
+    return {"pipelines": pipelines, "total": len(pipelines)}
+
+
+@router.get("/admin/pipelines/stats")
+async def pipeline_stats():
+    """Get aggregate pipeline execution statistics."""
+    stats = pipeline_diagnostics.get_stats()
+    return {"stats": stats}
+
+
+@router.get("/admin/pipelines/traces")
+async def pipeline_traces(limit: int = 20):
+    """Get recent pipeline execution traces."""
+    traces = pipeline_diagnostics.get_recent_traces(limit)
+    return {
+        "traces": [
+            {
+                "trace_id": t.trace_id,
+                "pipeline_id": t.pipeline_id,
+                "model_id": t.model_id,
+                "status": t.status,
+                "started_at": t.started_at,
+                "completed_at": t.completed_at,
+                "total_duration_ms": t.total_duration_ms,
+                "stage_count": len(t.stage_traces),
+                "error_message": t.error_message,
+                "request_id": t.request_id,
+            }
+            for t in traces
+        ],
+        "total": len(traces),
+    }
+
+
+# ── Pipeline Execution endpoints (must come before {pipeline_id}) ──
+
+
+@router.get("/admin/pipelines/executions")
+async def list_executions(pipeline_id: str | None = None, status: str | None = None, limit: int = 20):
+    """List recent pipeline executions with filtering."""
+    from app.pipeline.observability.store import execution_store
+
+    executions = execution_store.get_recent(limit=limit, pipeline_id=pipeline_id, status=status)
+    return {
+        "executions": [e.to_list_row() for e in executions],
+        "total": len(executions),
+        "filters": {"pipeline_id": pipeline_id, "status": status},
+    }
+
+
+@router.get("/admin/pipelines/executions/{execution_id}")
+async def get_execution_detail(execution_id: str):
+    """Get detailed execution trace with stage explainability."""
+    from app.pipeline.observability.recorder import observability_recorder
+    from app.pipeline.observability.store import execution_store
+
+    summary = execution_store.get(execution_id)
+    if summary is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Execution '{execution_id}' not found"},
+        )
+
+    # Build failure analysis if applicable
+    failure_analysis = None
+    if summary.status == "failed":
+        failure_analysis = observability_recorder.build_failure_analysis(summary)
+
+    result = summary.to_dict()
+    if failure_analysis:
+        result["failure_analysis"] = failure_analysis.to_dict()
+
+    return result
+
+
+@router.get("/admin/pipelines/executions/store/stats")
+async def execution_store_stats():
+    """Get execution store statistics."""
+    from app.pipeline.observability.store import execution_store
+
+    return execution_store.get_stats()
+
+
+@router.get("/admin/pipelines/stage-performance")
+async def get_stage_performance(model_id: str | None = None, stage_role: str | None = None):
+    """Get stage-specific performance metrics per model."""
+    from app.pipeline.observability.stage_perf import stage_performance
+
+    if model_id and stage_role:
+        return stage_performance.get_model_role_stats(model_id, stage_role)
+
+    all_stats = stage_performance.get_all_model_roles()
+    return {"stats": all_stats, "total": len(all_stats)}
+
+
+@router.get("/admin/pipelines/stage-scoring")
+async def get_stage_scoring(model_id: str | None = None, stage_role: str | None = None):
+    """Get scoring breakdown for models in a stage role.
+
+    Shows full scoring transparency:
+    - base static score
+    - dynamic performance adjustment
+    - failure penalty
+    - final score
+    - cold_start / fallback_heavy / top_performer badges
+    """
+    from app.agents.registry import registry as agent_registry
+    from app.browser.registry import registry as browser_registry
+    from app.integrations.registry import api_registry
+    from app.intelligence.suitability import suitability_scorer
+    from app.intelligence.tags import capability_registry
+
+    role = stage_role or "generate"
+
+    # Collect all models with scoring
+    scoring_results: list[dict] = []
+
+    for reg, transport in [
+        (browser_registry, "browser"),
+        (api_registry, "api"),
+        (agent_registry, "agent"),
+    ]:
+        for m in reg.list_models():
+            if not m.get("enabled", True):
+                continue
+            mid = m["id"]
+            provider_id = m.get("provider_id", "")
+
+            # Filter if specific model requested
+            if model_id and mid != model_id:
+                continue
+
+            # Get tags
+            tags = capability_registry.get_tags(mid, provider_id)
+
+            # Get performance stats
+            try:
+                from app.pipeline.observability.stage_perf import stage_performance as perf_tracker
+                perf_stats = perf_tracker.get_model_role_stats(mid, role)
+            except Exception:
+                perf_stats = {"sample_count": 0, "success_rate": 0.5, "fallback_rate": 0.0, "avg_duration_ms": 0.0}
+
+            # Get scoring breakdown
+            breakdown = suitability_scorer.compute_breakdown(
+                mid, provider_id, transport, role,
+            )
+
+            sample_count = perf_stats.get("sample_count", 0)
+            fallback_rate = perf_stats.get("fallback_rate", 0.0)
+            success_rate = perf_stats.get("success_rate", 0.5)
+
+            # Status flags
+            cold_start = sample_count < 5
+            fallback_heavy = fallback_rate > 0.2 and sample_count >= 5
+            top_performer = success_rate >= 0.9 and sample_count >= 5
+
+            scoring_results.append({
+                "model_id": mid,
+                "provider_id": provider_id,
+                "transport": transport,
+                "role": role,
+                "final_score": round(breakdown.final_score, 3),
+                "base_static_score": round(breakdown.base_static_score, 3),
+                "dynamic_adjustment": round(breakdown.dynamic_adjustment, 3),
+                "failure_penalty": round(breakdown.failure_penalty, 3),
+                "penalty_reasons": breakdown.penalty_reasons,
+                "success_rate": round(success_rate, 3),
+                "fallback_rate": round(fallback_rate, 3),
+                "avg_duration_ms": round(perf_stats.get("avg_duration_ms", 0.0), 1),
+                "sample_count": sample_count,
+                "data_confidence": round(breakdown.data_confidence, 3),
+                "tags": sorted(tags),
+                "cold_start": cold_start,
+                "fallback_heavy": fallback_heavy,
+                "top_performer": top_performer,
+            })
+
+    # Sort by final score descending
+    scoring_results.sort(key=lambda s: s["final_score"], reverse=True)
+
+    return {
+        "stage_role": role,
+        "scoring": scoring_results,
+        "total": len(scoring_results),
+    }
+
+
+@router.get("/admin/pipelines/penalty-cache")
+async def get_penalty_cache_status():
+    """Get current global penalty cache status."""
+    from app.pipeline.observability.penalty_cache import global_penalty_cache
+
+    penalties = global_penalty_cache.get_all_penalties()
+    return {
+        "active_penalties": penalties,
+        "total_tracked": len(penalties),
+        "ttl_seconds": global_penalty_cache._ttl,
+    }
+
+
+@router.post("/admin/pipelines/penalty-cache/clear")
+async def clear_penalty_cache():
+    """Clear all cached penalties."""
+    from app.pipeline.observability.penalty_cache import global_penalty_cache
+
+    global_penalty_cache.clear()
+    return {"status": "cleared"}
+
+
+@router.get("/admin/pipelines/stage-scoring/{role}")
+async def get_scoring_for_role(role: str):
+    """Get scoring breakdown for all models in a specific stage role."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=f"/admin/pipelines/stage-scoring?stage_role={role}")
+
+
+@router.get("/admin/pipelines/stage-performance/trends")
+async def get_stage_performance_trends():
+    """Get stage performance trends."""
+    from app.pipeline.observability.stage_perf import stage_performance
+
+    all_stats = stage_performance.get_all_model_roles()
+    top_performers = sorted(
+        [s for s in all_stats if s.get("count", 0) >= 5],
+        key=lambda s: s.get("success_rate", 0),
+        reverse=True,
+    )[:10]
+    fallback_heavy = sorted(
+        [s for s in all_stats if s.get("fallback_rate", 0) > 0.1],
+        key=lambda s: s.get("fallback_rate", 0),
+        reverse=True,
+    )[:10]
+
+    all_model_ids = set()
+    from app.agents.registry import registry as agent_registry
+    from app.browser.registry import registry as browser_registry
+    from app.integrations.registry import api_registry
+
+    for reg in [browser_registry, api_registry, agent_registry]:
+        for m in reg.list_models():
+            if m.get("enabled", True):
+                all_model_ids.add(m["id"])
+
+    tracked_models = {s["model_id"] for s in all_stats}
+    cold_start = list(all_model_ids - tracked_models)
+
+    return {
+        "top_performers": top_performers,
+        "fallback_heavy": fallback_heavy,
+        "cold_start_models": cold_start,
+        "total_tracked": len(tracked_models),
+        "total_known_models": len(all_model_ids),
+    }
+
+
+@router.get("/admin/pipelines/executions/persistent")
+async def list_persistent_executions(pipeline_id: str | None = None, status: str | None = None, limit: int = 20):
+    """List recent executions from the persistent SQLite store."""
+    from app.pipeline.observability.persistent_store import get_persistent_store
+
+    store = get_persistent_store()
+    executions = store.get_recent(limit=limit, pipeline_id=pipeline_id, status=status)
+    return {
+        "executions": executions,
+        "total": len(executions),
+        "persistent": True,
+        "filters": {"pipeline_id": pipeline_id, "status": status},
+    }
+
+
+@router.post("/admin/pipelines/{pipeline_id}/run-test")
+async def run_pipeline_test(pipeline_id: str, body: dict | None = None):
+    """Run a diagnostic test execution of a pipeline."""
+    import time as _time
+    import uuid
+
+    from app.pipeline.executor import pipeline_executor
+    from app.pipeline.types import pipeline_registry
+    from app.schemas.openai import ChatCompletionRequest, ChatMessage
+
+    pipeline_def = pipeline_registry.get(pipeline_id)
+    if pipeline_def is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Pipeline '{pipeline_id}' not found"},
+        )
+
+    if not pipeline_def.enabled:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Pipeline '{pipeline_id}' is disabled"},
+        )
+
+    test_prompt = "Test prompt for pipeline diagnostics"
+    if body and isinstance(body, dict):
+        test_prompt = body.get("prompt", test_prompt)
+
+    request_id = f"test-{uuid.uuid4().hex[:8]}"
+    test_request = ChatCompletionRequest(
+        model=pipeline_def.model_id,
+        messages=[ChatMessage(role="user", content=test_prompt)],
+    )
+
+    started = _time.monotonic()
+    try:
+        response = await pipeline_executor.execute(pipeline_def, test_request, request_id)
+        elapsed_ms = (_time.monotonic() - started) * 1000
+
+        return {
+            "status": "success",
+            "pipeline_id": pipeline_id,
+            "execution_id": response.id,
+            "request_id": request_id,
+            "duration_ms": round(elapsed_ms, 1),
+            "output_preview": response.choices[0].message.content[:200] if response.choices else "",
+        }
+
+    except Exception as exc:
+        elapsed_ms = (_time.monotonic() - started) * 1000
+        return {
+            "status": "failed",
+            "pipeline_id": pipeline_id,
+            "request_id": request_id,
+            "duration_ms": round(elapsed_ms, 1),
+            "error": str(exc),
+        }
+
+
+@router.post("/admin/pipelines/{pipeline_id}/run-sandbox")
+async def run_pipeline_sandbox(pipeline_id: str, body: dict | None = None):
+    """Dry-run a pipeline without calling providers."""
+    from app.pipeline.types import pipeline_registry
+
+    pipeline_def = pipeline_registry.get(pipeline_id)
+    if pipeline_def is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Pipeline '{pipeline_id}' not found"},
+        )
+
+    test_prompt = "Sandbox test prompt"
+    if body and isinstance(body, dict):
+        test_prompt = body.get("prompt", test_prompt)
+
+    stages_result = []
+    prev_model = ""
+
+    for stage_def in pipeline_def.stages:
+        stage_info = {
+            "stage_id": stage_def.stage_id,
+            "role": stage_def.role.value,
+            "uses_intelligent_selection": stage_def.uses_intelligent_selection,
+        }
+
+        if stage_def.uses_intelligent_selection and stage_def.selection_policy:
+            try:
+                from app.intelligence.selection import model_selector
+                from app.intelligence.types import SelectionPolicy
+
+                policy = SelectionPolicy(**stage_def.selection_policy)
+                selection = model_selector.select_for_stage(
+                    stage_id=stage_def.stage_id,
+                    stage_role=stage_def.role,
+                    policy=policy,
+                    previous_stage_model=prev_model,
+                )
+
+                stage_info["selected_model"] = selection.selected_model
+                stage_info["selected_provider"] = selection.selected_provider
+                stage_info["candidates"] = [c.to_dict() for c in selection.all_candidates[:10]]
+                stage_info["candidates_considered"] = selection.candidates_considered
+                stage_info["candidates_viable"] = selection.candidates_viable
+                stage_info["candidates_excluded"] = selection.candidates_excluded
+                prev_model = selection.selected_model
+
+            except Exception as exc:
+                stage_info["selection_error"] = str(exc)
+        else:
+            stage_info["selected_model"] = stage_def.target_model
+            prev_model = stage_def.target_model
+
+        stages_result.append(stage_info)
+
+    return {
+        "status": "sandbox_dry_run",
+        "pipeline_id": pipeline_id,
+        "pipeline_display_name": pipeline_def.display_name,
+        "prompt": test_prompt,
+        "stages": stages_result,
+        "stage_count": len(stages_result),
+    }
+
+
+@router.get("/admin/pipelines/{pipeline_id}")
+async def get_pipeline(pipeline_id: str):
+    """Get detailed info for a specific pipeline."""
+    pdef = pipeline_registry.get(pipeline_id)
+    if pdef is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Pipeline '{pipeline_id}' not found"},
+        )
+
+    return {
+        "pipeline_id": pdef.pipeline_id,
+        "model_id": pdef.model_id,
+        "display_name": pdef.display_name,
+        "description": pdef.description,
+        "enabled": pdef.enabled,
+        "max_total_time_ms": pdef.max_total_time_ms,
+        "max_stage_retries": pdef.max_stage_retries,
+        "stages": [
+            {
+                "stage_id": s.stage_id,
+                "role": s.role.value,
+                "target_model": s.target_model,
+                "input_mapping": s.input_mapping.model_dump(),
+                "output_mode": s.output_mode.value,
+                "failure_policy": s.failure_policy.value,
+                "max_retries": s.max_retries,
+                "prompt_template": s.prompt_template,
+            }
+            for s in pdef.stages
+        ],
+        "metadata": pdef.metadata,
+    }
+
+
+@router.post("/admin/pipelines/{pipeline_id}/enable")
+async def enable_pipeline(pipeline_id: str):
+    """Enable a pipeline."""
+    pdef = pipeline_registry.get(pipeline_id)
+    if pdef is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Pipeline '{pipeline_id}' not found"},
+        )
+
+    pipeline_registry.enable(pipeline_id)
+    return {"pipeline_id": pipeline_id, "enabled": True}
+
+
+@router.post("/admin/pipelines/{pipeline_id}/disable")
+async def disable_pipeline(pipeline_id: str):
+    """Disable a pipeline."""
+    pdef = pipeline_registry.get(pipeline_id)
+    if pdef is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Pipeline '{pipeline_id}' not found"},
+        )
+
+    pipeline_registry.disable(pipeline_id)
+    return {"pipeline_id": pipeline_id, "enabled": False}
+
+
+@router.get("/admin/pipelines/traces/{trace_id}")
+async def get_pipeline_trace(trace_id: str):
+    """Get a detailed pipeline execution trace."""
+    trace = pipeline_diagnostics.get_trace(trace_id)
+    if trace is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Trace '{trace_id}' not found"},
+        )
+
+    return {
+        "trace_id": trace.trace_id,
+        "pipeline_id": trace.pipeline_id,
+        "model_id": trace.model_id,
+        "status": trace.status,
+        "started_at": trace.started_at,
+        "completed_at": trace.completed_at,
+        "total_duration_ms": trace.total_duration_ms,
+        "final_output": trace.final_output[:500] if trace.final_output else "",
+        "error_message": trace.error_message,
+        "request_id": trace.request_id,
+        "original_request_model": trace.original_request_model,
+        "stage_traces": [
+            {
+                "stage_id": st.stage_id,
+                "role": st.role,
+                "target_model": st.target_model,
+                "provider_id": st.provider_id,
+                "status": st.status,
+                "duration_ms": st.duration_ms,
+                "retry_count": st.retry_count,
+                "error_message": st.error_message,
+                "result_summary": st.result_summary,
+            }
+            for st in trace.stage_traces
+        ],
+    }
+
+
+# ── Model Intelligence endpoints ──
+
+
+@router.get("/admin/intelligence/models")
+async def list_model_intelligence():
+    """List per-model intelligence: availability, stability, suitability, ranking."""
+    from app.intelligence.stats import stats_aggregator
+    from app.intelligence.suitability import suitability_scorer
+    from app.intelligence.tags import capability_registry
+
+    all_stats = stats_aggregator.get_all_model_stats()
+    models = []
+
+    for stats in all_stats:
+        suitability = suitability_scorer.compute_suitability(
+            stats.model_id, stats.provider_id, stats.transport,
+        )
+        tags = capability_registry.get_tags(stats.model_id, stats.provider_id)
+
+        models.append({
+            "model_id": stats.model_id,
+            "provider_id": stats.provider_id,
+            "transport": stats.transport,
+            "availability": {
+                "score": round(stats.availability_score, 3),
+                "success_rate": round(stats.success_rate, 3),
+                "failure_rate": round(stats.failure_rate, 3),
+                "circuit_open": stats.circuit_open,
+                "consecutive_failures": stats.consecutive_failures,
+                "health_score": round(stats.health_score, 3),
+            },
+            "latency": {
+                "avg_s": round(stats.avg_latency_s, 2),
+                "p50_s": round(stats.p50_latency_s, 2),
+                "p95_s": round(stats.p95_latency_s, 2),
+                "score": round(stats.latency_score, 3),
+            },
+            "stability_score": round(stats.stability_score, 3),
+            "capability_tags": sorted(tags),
+            "stage_suitability": {
+                "generate": round(suitability.generate_score, 3),
+                "review": round(suitability.review_score, 3),
+                "critique": round(suitability.critique_score, 3),
+                "refine": round(suitability.refine_score, 3),
+                "verify": round(suitability.verify_score, 3),
+                "transform": round(suitability.transform_score, 3),
+            },
+            "recommended_roles": _get_recommended_roles(suitability),
+            "request_count": stats.request_count,
+            "fallback_count": stats.fallback_count,
+        })
+
+    return {"models": models, "total": len(models)}
+
+
+@router.get("/admin/intelligence/tags")
+async def list_capability_tags():
+    """List all capability tags and their assignments."""
+    from app.intelligence.tags import capability_registry
+
+    return capability_registry.list_all_tags()
+
+
+@router.get("/admin/intelligence/ranking/{role}")
+async def get_ranking_for_role(role: str, limit: int = 10):
+    """Get ranked list of models for a specific stage role."""
+    from app.intelligence.stats import stats_aggregator
+    from app.intelligence.suitability import suitability_scorer
+
+    # Collect all candidates
+    all_stats = stats_aggregator.get_all_model_stats()
+    ranked = []
+
+    for stats in all_stats:
+        stage_score = suitability_scorer.compute_for_role(
+            stats.model_id, stats.provider_id, stats.transport, role,
+        )
+
+        ranked.append({
+            "model_id": stats.model_id,
+            "provider_id": stats.provider_id,
+            "transport": stats.transport,
+            "stage_score": round(stage_score, 3),
+            "availability_score": round(stats.availability_score, 3),
+            "final_score": round(stage_score * 0.6 + stats.availability_score * 0.4, 3),
+        })
+
+    # Sort by final score
+    ranked.sort(key=lambda r: r["final_score"], reverse=True)
+
+    return {
+        "role": role,
+        "ranked_models": ranked[:limit],
+        "total_candidates": len(ranked),
+    }
+
+
+def _get_recommended_roles(suitability) -> list[str]:
+    """Get recommended stage roles for a model based on suitability scores."""
+    thresholds = {
+        "generate": suitability.generate_score,
+        "review": suitability.review_score,
+        "critique": suitability.critique_score,
+        "refine": suitability.refine_score,
+        "verify": suitability.verify_score,
+        "transform": suitability.transform_score,
+    }
+
+    sorted_roles = sorted(thresholds.items(), key=lambda x: x[1], reverse=True)
+    return [role for role, score in sorted_roles[:2] if score >= 0.6]

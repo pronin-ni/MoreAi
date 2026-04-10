@@ -61,6 +61,16 @@ async def lifespan(app: FastAPI):
     await baseline_refresher.start()
     logger.info("Baseline refresher started")
 
+    # Initialize pipeline subsystem
+    from app.pipeline.executor import initialize_pipelines
+    initialize_pipelines()
+    logger.info("Pipeline subsystem initialized")
+
+    # Initialize intelligence subsystem (capability tags)
+    from app.intelligence.tags import capability_registry
+    capability_registry.initialize()
+    logger.info("Model intelligence subsystem initialized")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
