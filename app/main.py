@@ -71,6 +71,11 @@ async def lifespan(app: FastAPI):
     capability_registry.initialize()
     logger.info("Model intelligence subsystem initialized")
 
+    # Start scoring snapshot scheduler (background thread)
+    from app.pipeline.observability.scoring_trends import snapshot_scheduler
+    snapshot_scheduler.start()
+    logger.info("Scoring snapshot scheduler started")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
@@ -88,6 +93,11 @@ async def lifespan(app: FastAPI):
     # Stop admin observer
     await observer.stop()
     logger.info("Admin observer stopped")
+
+    # Stop scoring snapshot scheduler
+    from app.pipeline.observability.scoring_trends import snapshot_scheduler
+    snapshot_scheduler.stop()
+    logger.info("Scoring snapshot scheduler stopped")
 
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")

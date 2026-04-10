@@ -73,12 +73,67 @@ class ObservabilityRecorder:
         ctx: PipelineContext,
         summary: PipelineExecutionSummary,
     ) -> None:
-        """Record per-stage performance metrics for future ranking."""
+        """Record per-stage performance metrics for future ranking.
+
+        Also extracts quality signals from full stage outputs (before truncation).
+        """
         try:
             from app.pipeline.observability.stage_perf import RolePerformanceEntry
             from app.pipeline.observability.stage_perf import stage_performance as perf_tracker
 
+            # Quality extraction (full output available in ctx.stage_outputs)
+            quality_score = 0.5
+            quality_signals = None
+            quality_explanation = ""
+
+            try:
+                from app.pipeline.observability.quality_scoring import (
+                    quality_extractor,
+                    quality_metrics_store,
+                )
+
+                for stage_summary in summary.stage_summaries:
+                    # Get full output from context (not truncated)
+                    stage_result = ctx.stage_outputs.get(stage_summary.stage_id)
+                    full_output = stage_result.output if stage_result else ""
+                    input_text = ctx.get_previous_output(stage_summary.stage_id) or ""
+
+                    # Extract quality signals
+                    signals = quality_extractor.extract(
+                        full_output,
+                        stage_summary.stage_role,
+                        input_text,
+                    )
+                    qs = quality_extractor.compute_quality_score(
+                        signals, stage_summary.stage_role,
+                    )
+                    quality_explanation = quality_extractor.explain_score(
+                        signals, qs, stage_summary.stage_role,
+                    )
+
+                    # Store quality metrics
+                    quality_metrics_store.record(
+                        model_id=stage_summary.selected_model or "",
+                        provider_id=stage_summary.selected_provider or "",
+                        transport=stage_summary.selected_transport or "",
+                        role=stage_summary.stage_role,
+                        quality_score=qs,
+                        signals=signals,
+                        explanation=quality_explanation,
+                    )
+                    quality_score = qs
+                    quality_signals = signals
+            except Exception as exc:
+                logger.debug("quality_extraction_failed", error=str(exc))
+
+            # Record stage performance (with quality hint)
             for stage_summary in summary.stage_summaries:
+                # If we have quality signals, use the computed quality score;
+                # otherwise fall back to the old binary heuristic
+                q_hint = quality_score if quality_signals else (
+                    1.0 if stage_summary.output_summary else 0.0
+                )
+
                 entry = RolePerformanceEntry(
                     model_id=stage_summary.selected_model or "",
                     provider_id=stage_summary.selected_provider or "",
@@ -87,8 +142,7 @@ class ObservabilityRecorder:
                     duration_ms=stage_summary.duration_ms,
                     had_fallback=stage_summary.fallback_count > 0,
                     had_retry=stage_summary.retry_count > 0,
-                    # Proxy for quality: non-empty output = higher quality
-                    output_quality_hint=1.0 if stage_summary.output_summary else 0.0,
+                    output_quality_hint=q_hint,
                 )
                 perf_tracker.record(entry)
         except Exception as exc:

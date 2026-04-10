@@ -488,6 +488,13 @@ async def get_stage_scoring(model_id: str | None = None, stage_role: str | None 
                 "cold_start": cold_start,
                 "fallback_heavy": fallback_heavy,
                 "top_performer": top_performer,
+                # Quality metrics
+                "quality_score": round(breakdown.quality_score, 3),
+                "quality_adjustment": round(breakdown.quality_adjustment, 3),
+                "quality_sample_count": breakdown.quality_sample_count,
+                "quality_confidence": round(breakdown.quality_confidence, 3),
+                "high_quality": breakdown.quality_score >= 0.7 and breakdown.quality_sample_count >= 3,
+                "low_quality": breakdown.quality_score < 0.35 and breakdown.quality_sample_count >= 3,
             })
 
     # Sort by final score descending
@@ -520,6 +527,212 @@ async def clear_penalty_cache():
 
     global_penalty_cache.clear()
     return {"status": "cleared"}
+
+
+# ── Scoring History & Trend Analysis endpoints ──
+
+
+@router.get("/admin/pipelines/scoring-history")
+async def get_scoring_history(
+    model_id: str | None = None,
+    role: str | None = None,
+    window: str | None = None,
+    limit: int = 200,
+):
+    """Get scoring history time series.
+
+    Query params:
+    - model_id: Filter by model (optional).
+    - role: Filter by stage role (optional).
+    - window: Time window — '1h', '24h', '7d' (default '24h').
+    - limit: Max data points (default 200).
+    """
+    from app.pipeline.observability.scoring_history import scoring_history_store
+
+    window_map = {"1h": 3600, "24h": 86400, "7d": 604800}
+    window_seconds = window_map.get(window or "24h", 86400)
+
+    history = scoring_history_store.get_history(
+        model_id=model_id,
+        role=role,
+        window_seconds=window_seconds,
+        limit=limit,
+    )
+
+    points = [
+        {
+            "timestamp": s.timestamp,
+            "model_id": s.model_id,
+            "provider_id": s.provider_id,
+            "transport": s.transport,
+            "role": s.role,
+            "final_score": round(s.final_score, 4),
+            "base_static_score": round(s.base_static_score, 4),
+            "dynamic_adjustment": round(s.dynamic_adjustment, 4),
+            "failure_penalty": round(s.failure_penalty, 4),
+            "success_rate": round(s.success_rate, 4),
+            "fallback_rate": round(s.fallback_rate, 4),
+            "avg_duration_ms": round(s.avg_duration_ms, 1),
+            "sample_count": s.sample_count,
+            "data_confidence": round(s.data_confidence, 4),
+        }
+        for s in history
+    ]
+
+    return {
+        "history": points,
+        "total": len(points),
+        "window": window or "24h",
+        "window_seconds": window_seconds,
+    }
+
+
+@router.get("/admin/pipelines/scoring-trends")
+async def get_scoring_trends(
+    role: str | None = None,
+    window: str | None = None,
+    limit: int = 50,
+):
+    """Get scoring trends for all models.
+
+    Returns trend summaries including:
+    - score / success_rate / fallback_rate / duration deltas
+    - trend classification: improving, stable, declining, unstable
+    - main driver identification
+
+    Query params:
+    - role: Filter by stage role (optional, default all roles).
+    - window: Time window — '1h', '24h', '7d' (default '24h').
+    - limit: Max results (default 50).
+    """
+    from app.pipeline.observability.scoring_trends import scoring_trend_analyzer
+
+    window_map = {"1h": 3600, "24h": 86400, "7d": 604800}
+    window_seconds = window_map.get(window or "24h", 86400)
+
+    trends = scoring_trend_analyzer.get_all_trends(
+        role=role,
+        window_seconds=window_seconds,
+    )
+
+    trend_list = [
+        {
+            "model_id": t.model_id,
+            "provider_id": t.provider_id,
+            "transport": t.transport,
+            "role": t.role,
+            "window": t.window_label,
+            "current_score": round(t.current_score, 4),
+            "previous_score": round(t.previous_score, 4),
+            "score_delta": round(t.score_delta, 4),
+            "current_success_rate": round(t.current_success_rate, 4),
+            "previous_success_rate": round(t.previous_success_rate, 4),
+            "success_rate_delta": round(t.success_rate_delta, 4),
+            "current_fallback_rate": round(t.current_fallback_rate, 4),
+            "previous_fallback_rate": round(t.previous_fallback_rate, 4),
+            "fallback_rate_delta": round(t.fallback_rate_delta, 4),
+            "current_avg_duration_ms": round(t.current_avg_duration_ms, 1),
+            "previous_avg_duration_ms": round(t.previous_avg_duration_ms, 1),
+            "duration_delta_ms": round(t.duration_delta_ms, 1),
+            "overall_trend": t.overall_trend,
+            "main_driver": t.main_driver,
+            "data_points": t.data_points,
+            "has_enough_data": t.has_enough_data,
+        }
+        for t in trends[:limit]
+    ]
+
+    # Derive summary lists
+    improvers = [t for t in trend_list if t["overall_trend"] == "improving"][:10]
+    decliners = [t for t in trend_list if t["overall_trend"] == "declining"][:10]
+    unstable = [t for t in trend_list if t["overall_trend"] == "unstable"][:10]
+
+    return {
+        "trends": trend_list,
+        "total": len(trend_list),
+        "window": window or "24h",
+        "top_improvers": improvers,
+        "top_decliners": decliners,
+        "unstable_models": unstable,
+    }
+
+
+@router.post("/admin/pipelines/scoring-history/snapshot")
+async def trigger_scoring_snapshot():
+    """Trigger an immediate scoring snapshot capture.
+
+    Captures current scoring state for all models and roles.
+    """
+    from app.pipeline.observability.scoring_trends import snapshot_scheduler
+
+    count = snapshot_scheduler.capture_now()
+    return {
+        "status": "ok",
+        "snapshots_recorded": count,
+    }
+
+
+@router.get("/admin/pipelines/scoring-history/scheduler")
+async def get_snapshot_scheduler_status():
+    """Get snapshot scheduler status."""
+    from app.pipeline.observability.scoring_trends import snapshot_scheduler
+
+    return snapshot_scheduler.get_status()
+
+
+@router.get("/admin/pipelines/scoring-history/store/stats")
+async def get_scoring_history_store_stats():
+    """Get scoring history store statistics."""
+    from app.pipeline.observability.scoring_history import scoring_history_store
+
+    return scoring_history_store.get_stats()
+
+
+# ── Stage Quality endpoints ──
+
+
+@router.get("/admin/pipelines/stage-quality")
+async def get_stage_quality(role: str | None = None):
+    """Get quality metrics for all models per stage role.
+
+    Returns:
+    - Per-model quality scores, sample counts, issue counts
+    - Top quality and low quality model lists
+    - Quality trend data
+    """
+    from app.pipeline.observability.quality_scoring import quality_metrics_store
+
+    summaries = quality_metrics_store.get_all_quality_summary(role=role, window=100)
+
+    # Derive top/low quality lists
+    top_quality = [s for s in summaries if s["sample_count"] >= 3][:10]
+    low_quality = [
+        s for s in summaries
+        if s["sample_count"] >= 3 and s["avg_quality"] < 0.4
+    ][:10]
+
+    # Determine quality stability (high stddev = unstable)
+    for s in summaries:
+        s["quality_label"] = (
+            "high_quality" if s["avg_quality"] >= 0.7 and s["sample_count"] >= 3
+            else "low_quality" if s["avg_quality"] < 0.35 and s["sample_count"] >= 3
+            else "unstable_quality" if s.get("max_quality", 1) - s.get("min_quality", 0) > 0.5 and s["sample_count"] >= 3
+            else "normal"
+        )
+
+    return {
+        "quality": summaries,
+        "total": len(summaries),
+        "top_quality": top_quality,
+        "low_quality": low_quality,
+    }
+
+
+@router.get("/admin/pipelines/stage-quality/{role}")
+async def get_stage_quality_for_role(role: str):
+    """Get quality breakdown for a specific stage role."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=f"/admin/pipelines/stage-quality?role={role}")
 
 
 @router.get("/admin/pipelines/stage-scoring/{role}")

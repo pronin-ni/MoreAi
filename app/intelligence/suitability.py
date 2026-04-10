@@ -95,8 +95,14 @@ class ScoringBreakdown:
     """Transparent scoring breakdown for a model+role candidate.
 
     Shows how the final score was computed:
-    base_static_score + dynamic_adjustment - failure_penalty = final_score
+    base_static_score + dynamic_performance + quality_adjustment - failure_penalty = final_score
     """
+
+    # Max influence of quality on final score (bounded)
+    MAX_QUALITY_ADJUSTMENT = 0.15
+
+    # Minimum samples before quality starts influencing score
+    MIN_QUALITY_SAMPLES = 3
 
     def __init__(
         self,
@@ -124,6 +130,12 @@ class ScoringBreakdown:
         self.performance_sample_count: int = 0
         self.data_confidence: float = 0.0
 
+        # Quality adjustment (from quality_metrics store)
+        self.quality_score: float = 0.5
+        self.quality_adjustment: float = 0.0
+        self.quality_sample_count: int = 0
+        self.quality_confidence: float = 0.0
+
         # Temporary failure penalty (from adaptive fallback)
         self.failure_penalty: float = 0.0
         self.penalty_reasons: list[str] = []
@@ -140,7 +152,12 @@ class ScoringBreakdown:
             + self.tag_bonus_score * 0.20
         )
 
-        self.final_score = self.base_static_score + self.dynamic_adjustment - self.failure_penalty
+        self.final_score = (
+            self.base_static_score
+            + self.dynamic_adjustment
+            + self.quality_adjustment
+            - self.failure_penalty
+        )
         self.final_score = min(1.0, max(0.0, self.final_score))
 
     def to_dict(self) -> dict:
@@ -161,6 +178,12 @@ class ScoringBreakdown:
                 "fallback_rate": round(self.performance_fallback_rate, 3),
                 "sample_count": self.performance_sample_count,
                 "data_confidence": round(self.data_confidence, 3),
+            },
+            "quality": {
+                "score": round(self.quality_score, 3),
+                "adjustment": round(self.quality_adjustment, 3),
+                "sample_count": self.quality_sample_count,
+                "confidence": round(self.quality_confidence, 3),
             },
             "failure_penalty": round(self.failure_penalty, 3),
             "penalty_reasons": self.penalty_reasons,
@@ -284,6 +307,9 @@ class SuitabilityScorer:
                     breakdown.penalty_reasons.append(f"global:{r}")
         except Exception:
             pass  # Penalty cache is optional
+
+        # Quality adjustment (from quality_metrics store)
+        self._compute_quality_adjustment(breakdown)
 
         # Compute final
         breakdown.compute()
@@ -412,6 +438,60 @@ class SuitabilityScorer:
         if matching >= len(relevant_tags):
             return 1.0  # All relevant tags = full bonus
         return matching / len(relevant_tags)
+
+    def _compute_quality_adjustment(self, breakdown: ScoringBreakdown) -> None:
+        """Compute quality adjustment from quality_metrics store.
+
+        Quality score (0.0-1.0) is mapped to a bounded adjustment:
+        - quality > 0.5 → positive adjustment (up to +MAX_QUALITY_ADJUSTMENT)
+        - quality < 0.5 → negative adjustment (down to -MAX_QUALITY_ADJUSTMENT)
+        - quality == 0.5 → no adjustment
+
+        Cold-start: requires MIN_QUALITY_SAMPLES before quality influences scoring.
+        Confidence scales linearly from 0 to 1 as samples increase.
+        """
+        try:
+            from app.pipeline.observability.quality_scoring import (
+                quality_metrics_store,
+            )
+        except Exception:
+            return  # Quality store not available
+
+        metrics = quality_metrics_store.get_quality_metrics(
+            model_id=breakdown.model_id,
+            role=breakdown.role,
+            window=100,
+        )
+
+        breakdown.quality_score = metrics.avg_quality_score
+        breakdown.quality_sample_count = metrics.sample_count
+
+        # Cold-start: not enough quality data
+        if metrics.sample_count < ScoringBreakdown.MIN_QUALITY_SAMPLES:
+            breakdown.quality_confidence = 0.0
+            breakdown.quality_adjustment = 0.0
+            return
+
+        # Confidence: linear scale from MIN_SAMPLES to 20 samples
+        if metrics.sample_count >= 20:
+            breakdown.quality_confidence = 1.0
+        else:
+            breakdown.quality_confidence = (
+                (metrics.sample_count - ScoringBreakdown.MIN_QUALITY_SAMPLES)
+                / (20 - ScoringBreakdown.MIN_QUALITY_SAMPLES)
+            )
+
+        # Adjustment: (quality - 0.5) * 2 * MAX_QUALITY_ADJUSTMENT * confidence
+        # Maps quality 0.0→-MAX, 0.5→0, 1.0→+MAX
+        raw_adjustment = (metrics.avg_quality_score - 0.5) * 2 * ScoringBreakdown.MAX_QUALITY_ADJUSTMENT
+        breakdown.quality_adjustment = raw_adjustment * breakdown.quality_confidence
+
+        # Clamp to bounds
+        breakdown.quality_adjustment = max(
+            -ScoringBreakdown.MAX_QUALITY_ADJUSTMENT,
+            min(ScoringBreakdown.MAX_QUALITY_ADJUSTMENT,
+                breakdown.quality_adjustment),
+        )
 
 
 # Global singleton

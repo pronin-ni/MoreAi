@@ -676,6 +676,8 @@
             loadPipelineData();
         } else if (tabName === 'Scoring') {
             loadScoringData();
+        } else if (tabName === 'Trends') {
+            loadTrendsData();
         }
     }
 
@@ -1614,6 +1616,128 @@
         return div.innerHTML;
     }
 
+    // ── Trends Tab ──
+
+    window.loadTrendsData = async function() {
+        const role = document.getElementById('trends-role-select').value;
+        const window = document.getElementById('trends-window-select').value;
+
+        const params = new URLSearchParams();
+        if (role) params.set('role', role);
+        params.set('window', window);
+
+        try {
+            const data = await fetchApi(`/admin/pipelines/scoring-trends?${params}`);
+            renderTrends(data);
+        } catch (err) {
+            console.error('Failed to load trends:', err);
+            document.getElementById('trends-tbody').innerHTML =
+                `<tr><td colspan="10" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${err.message}</td></tr>`;
+        }
+    };
+
+    window.triggerSnapshot = async function() {
+        try {
+            const data = await fetchApi('/admin/pipelines/scoring-history/snapshot', { method: 'POST' });
+            alert(`Snapshot captured: ${data.snapshots_recorded} snapshots recorded`);
+            loadTrendsData();
+        } catch (err) {
+            console.error('Failed to trigger snapshot:', err);
+            alert(`Failed to capture snapshot: ${err.message}`);
+        }
+    };
+
+    function renderTrends(data) {
+        const trends = data.trends || [];
+        const improvers = data.top_improvers || [];
+        const decliners = data.top_decliners || [];
+        const unstable = data.unstable_models || [];
+
+        // Count by trend status
+        const statusCounts = { improving: 0, declining: 0, unstable: 0, stable: 0 };
+        trends.forEach(t => {
+            if (statusCounts.hasOwnProperty(t.overall_trend)) {
+                statusCounts[t.overall_trend]++;
+            }
+        });
+
+        document.getElementById('trend-improvers-count').textContent = statusCounts.improving;
+        document.getElementById('trend-decliners-count').textContent = statusCounts.declining;
+        document.getElementById('trend-unstable-count').textContent = statusCounts.unstable;
+        document.getElementById('trend-stable-count').textContent = statusCounts.stable;
+
+        // Render sub-tables
+        renderTrendTable('improvers-tbody', improvers, true);
+        renderTrendTable('decliners-tbody', decliners, true);
+        renderTrendTable('unstable-tbody', unstable, true);
+        renderTrendTable('trends-tbody', trends, false);
+    }
+
+    function renderTrendTable(tbodyId, items, compact) {
+        const tbody = document.getElementById(tbodyId);
+
+        if (!items || items.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="${compact ? 9 : 10}" style="padding: 1rem; text-align: center;">No data</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = items.map(t => {
+            const scoreDeltaStr = (t.score_delta >= 0 ? '+' : '') + t.score_delta.toFixed(3);
+            const srDeltaStr = (t.success_rate_delta >= 0 ? '+' : '') + (t.success_rate_delta * 100).toFixed(1) + '%';
+            const frDeltaStr = (t.fallback_rate_delta >= 0 ? '+' : '') + (t.fallback_rate_delta * 100).toFixed(1) + '%';
+            const durDeltaStr = (t.duration_delta_ms >= 0 ? '+' : '') + t.duration_delta_ms.toFixed(0) + 'ms';
+
+            const scoreColor = t.score_delta >= 0.05 ? 'var(--admin-success)' :
+                               t.score_delta <= -0.05 ? 'var(--admin-error)' : 'var(--admin-text-muted)';
+            const srColor = t.success_rate_delta >= 0 ? 'var(--admin-success)' : 'var(--admin-error)';
+            const frColor = t.fallback_rate_delta <= 0 ? 'var(--admin-success)' : 'var(--admin-error)';
+            const durColor = t.duration_delta_ms <= 0 ? 'var(--admin-success)' : 'var(--admin-error)';
+
+            let statusBadge = '';
+            if (!compact) {
+                const badgeClass = t.overall_trend === 'improving' ? 'badge-green' :
+                                   t.overall_trend === 'declining' ? 'badge-yellow' :
+                                   t.overall_trend === 'unstable' ? 'badge-red' : 'badge-gray';
+                const label = t.overall_trend === 'improving' ? '↑ rising' :
+                              t.overall_trend === 'declining' ? '↓ falling' :
+                              t.overall_trend === 'unstable' ? '⚡ unstable' : '— stable';
+                statusBadge = `<td style="padding: 0.3rem; text-align: center;"><span class="badge ${badgeClass}" style="font-size: 0.6rem;">${label}</span></td>`;
+            }
+
+            const driverLabel = t.main_driver ?
+                `<span style="font-size: 0.65rem;">${formatDriverLabel(t.main_driver)}</span>` :
+                '<span style="font-size: 0.65rem; color: var(--admin-text-muted);">—</span>';
+
+            return `<tr style="border-bottom: 1px solid var(--admin-border);">
+                <td style="padding: 0.3rem; font-family: var(--admin-font-mono); font-size: 0.7rem;">${t.model_id}</td>
+                <td style="padding: 0.3rem; font-size: 0.7rem;">${t.role}</td>
+                ${statusBadge}
+                <td style="padding: 0.3rem; text-align: center; font-family: var(--admin-font-mono); font-size: 0.7rem;">${t.current_score.toFixed(2)}</td>
+                <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${scoreColor};">${scoreDeltaStr}</td>
+                <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${srColor};">${srDeltaStr}</td>
+                <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${frColor};">${frDeltaStr}</td>
+                <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${durColor};">${durDeltaStr}</td>
+                <td style="padding: 0.3rem; text-align: center;">${driverLabel}</td>
+                <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${t.data_points}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    function formatDriverLabel(driver) {
+        const labels = {
+            'success_rate_improved': '✓ success ↑',
+            'success_rate_worsened': '✗ success ↓',
+            'fallback_rate_improved': '✓ fallback ↓',
+            'fallback_rate_worsened': '✗ fallback ↑',
+            'duration_improved': '✓ faster',
+            'duration_worsened': '✗ slower',
+            'no_significant_change': '—',
+            'no_change': '—',
+            'scoring_adjustment': '⚙ scoring',
+        };
+        return labels[driver] || driver;
+    }
+
     // ── Scoring Tab ──
 
     window.loadScoringData = async function() {
@@ -1623,7 +1747,7 @@
         try {
             const data = await fetchApi(`/admin/pipelines/stage-scoring?stage_role=${role}`);
             if (!data.scoring || data.scoring.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="12" style="padding: 1rem; text-align: center;">No scoring data available</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="14" style="padding: 1rem; text-align: center;">No scoring data available</td></tr>';
                 return;
             }
 
@@ -1633,6 +1757,17 @@
                 if (s.cold_start) badges.push('<span class="badge badge-gray" style="font-size: 0.6rem;">cold_start</span>');
                 if (s.fallback_heavy) badges.push('<span class="badge badge-yellow" style="font-size: 0.6rem;">fallback_heavy</span>');
                 if (s.top_performer) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">top</span>');
+                if (s.high_quality) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">high_quality</span>');
+                if (s.low_quality) badges.push('<span class="badge badge-red" style="font-size: 0.6rem;">low_quality</span>');
+
+                const qualityColor = s.quality_sample_count >= 3 ?
+                    (s.quality_score >= 0.6 ? 'var(--admin-success)' : s.quality_score < 0.4 ? 'var(--admin-error)' : 'var(--admin-text-muted)') :
+                    'var(--admin-text-muted)';
+                const qAdjColor = s.quality_adjustment > 0.01 ? 'var(--admin-success)' :
+                                  s.quality_adjustment < -0.01 ? 'var(--admin-error)' : 'var(--admin-text-muted)';
+                const qAdjStr = s.quality_sample_count >= 3 ?
+                    (s.quality_adjustment >= 0 ? '+' : '') + s.quality_adjustment.toFixed(3) :
+                    '—';
 
                 return `<tr style="border-bottom: 1px solid var(--admin-border);">
                     <td style="padding: 0.3rem; font-family: var(--admin-font-mono); font-size: 0.7rem;">${s.model_id}</td>
@@ -1640,6 +1775,8 @@
                     <td style="padding: 0.3rem; text-align: center; font-family: var(--admin-font-mono);">${scoreBar}</td>
                     <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${s.base_static_score.toFixed(2)}</td>
                     <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${s.dynamic_adjustment > 0 ? 'var(--admin-success)' : s.dynamic_adjustment < 0 ? 'var(--admin-error)' : 'var(--admin-text-muted)'};">${s.dynamic_adjustment >= 0 ? '+' : ''}${s.dynamic_adjustment.toFixed(2)}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${qualityColor};">${s.quality_sample_count >= 3 ? s.quality_score.toFixed(2) : '—'}</td>
+                    <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${qAdjColor};">${qAdjStr}</td>
                     <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem; color: ${s.failure_penalty > 0 ? 'var(--admin-error)' : 'var(--admin-text-muted)'};">${s.failure_penalty > 0 ? '-' + s.failure_penalty.toFixed(2) : '0.00'}</td>
                     <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${(s.success_rate * 100).toFixed(0)}%</td>
                     <td style="padding: 0.3rem; text-align: center; font-size: 0.7rem;">${(s.fallback_rate * 100).toFixed(0)}%</td>
@@ -1651,7 +1788,7 @@
             }).join('');
         } catch (err) {
             console.error('Failed to load scoring:', err);
-            tbody.innerHTML = `<tr><td colspan="12" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${err.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="14" style="padding: 1rem; text-align: center; color: var(--admin-error);">Error: ${err.message}</td></tr>`;
         }
     };
 

@@ -58,6 +58,7 @@
                 <button class="nav-tab" data-tab="Config">Config</button>
                 <button class="nav-tab" data-tab="Pipelines">Pipelines</button>
                 <button class="nav-tab" data-tab="Scoring">Scoring</button>
+                <button class="nav-tab" data-tab="Trends">Trends</button>
             </nav>
             <div class="header-actions">
                 <button id="refresh-btn" class="btn-secondary">↻ Refresh</button>
@@ -736,6 +737,8 @@
                                     <th style="padding: 0.4rem; text-align: center;">Score</th>
                                     <th style="padding: 0.4rem; text-align: center;">Base</th>
                                     <th style="padding: 0.4rem; text-align: center;">Dynamic</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Quality</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Q Adj</th>
                                     <th style="padding: 0.4rem; text-align: center;">Penalty</th>
                                     <th style="padding: 0.4rem; text-align: center;">Success</th>
                                     <th style="padding: 0.4rem; text-align: center;">Fallback</th>
@@ -746,7 +749,164 @@
                                 </tr>
                             </thead>
                             <tbody id="scoring-tbody">
-                                <tr><td colspan="12" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="14" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trends Tab -->
+            <div id="tab-Trends" class="tab-content">
+                <!-- Trend Summary Cards -->
+                <div class="stats-grid" id="trend-stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-improvers-count">—</div>
+                        <div class="stat-label">Improving Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-decliners-count">—</div>
+                        <div class="stat-label">Declining Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-unstable-count">—</div>
+                        <div class="stat-label">Unstable Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-stable-count">—</div>
+                        <div class="stat-label">Stable Models</div>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">Trend Controls</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="trends-role-select" onchange="loadTrendsData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="">All Roles</option>
+                                <option value="generate">generate</option>
+                                <option value="review">review</option>
+                                <option value="critique">critique</option>
+                                <option value="refine">refine</option>
+                                <option value="verify">verify</option>
+                                <option value="transform">transform</option>
+                            </select>
+                            <select id="trends-window-select" onchange="loadTrendsData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="24h">24h</option>
+                                <option value="1h">1h</option>
+                                <option value="7d">7d</option>
+                            </select>
+                            <button class="btn-secondary" onclick="loadTrendsData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                            <button class="btn-secondary" onclick="triggerSnapshot()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">📸 Capture Snapshot</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Improvers -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">📈 Top Improving Models</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="improvers-tbody">
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Top Decliners -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">📉 Top Declining Models</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="decliners-tbody">
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Unstable Models -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">⚡ Unstable Models</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="unstable-tbody">
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Full Trend Table -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">All Trends</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trends-tbody">
+                                <tr><td colspan="10" style="padding: 1rem; text-align: center;">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
