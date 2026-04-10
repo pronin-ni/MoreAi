@@ -18,13 +18,21 @@ from typing import Any
 
 @dataclass
 class CandidateExplain:
-    """Why a candidate was considered or excluded."""
+    """Why a candidate was considered or excluded.
+
+    Includes full scoring breakdown for traceability.
+    """
 
     model_id: str
     provider_id: str
     transport: str
     rank: int = 0
     score: float = 0.0
+
+    # Full scoring breakdown (optional — present when selection trace available)
+    scoring_breakdown: dict[str, Any] = field(default_factory=dict)
+    # Keys: base_static_score, dynamic_adjustment, failure_penalty,
+    #       penalty_reasons, performance (success_rate, fallback_rate, sample_count)
 
     # Inclusion/exclusion
     excluded: bool = False
@@ -36,7 +44,7 @@ class CandidateExplain:
     is_fallback: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "model_id": self.model_id,
             "provider_id": self.provider_id,
             "transport": self.transport,
@@ -48,6 +56,12 @@ class CandidateExplain:
             "selection_reason": self.selection_reason,
             "is_fallback": self.is_fallback,
         }
+        if self.scoring_breakdown:
+            result["scoring_breakdown"] = {
+                k: round(v, 3) if isinstance(v, float) else v
+                for k, v in self.scoring_breakdown.items()
+            }
+        return result
 
 
 @dataclass
@@ -128,6 +142,13 @@ class StageExecutionSummary:
     stage_budget_ms: int | None = None
     total_budget_ms: int | None = None
 
+    # Quality signals (populated by recorder)
+    quality_score: float = 0.5
+    quality_explanation: str = ""
+
+    # Cross-stage signals (populated by recorder, only present on generate/review/refine stages)
+    cross_stage: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "stage_id": self.stage_id,
@@ -154,6 +175,12 @@ class StageExecutionSummary:
             result["error_type"] = self.error_type
         if self.selection_explain:
             result["selection_explain"] = self.selection_explain.to_dict()
+        if self.quality_score != 0.5:
+            result["quality_score"] = round(self.quality_score, 3)
+        if self.quality_explanation:
+            result["quality_explanation"] = self.quality_explanation
+        if self.cross_stage:
+            result["cross_stage"] = self.cross_stage
 
         return result
 

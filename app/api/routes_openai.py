@@ -365,16 +365,32 @@ async def list_executions(pipeline_id: str | None = None, status: str | None = N
 
 @router.get("/admin/pipelines/executions/{execution_id}")
 async def get_execution_detail(execution_id: str):
-    """Get detailed execution trace with stage explainability."""
+    """Get detailed execution trace with stage explainability.
+
+    Checks in-memory store first, then falls back to persistent store.
+    """
     from app.pipeline.observability.recorder import observability_recorder
     from app.pipeline.observability.store import execution_store
 
     summary = execution_store.get(execution_id)
+
+    # Fallback to persistent store if not in memory
     if summary is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Execution '{execution_id}' not found"},
-        )
+        try:
+            from app.pipeline.observability.persistent_store import get_persistent_store
+            persistent = get_persistent_store()
+            exec_data = persistent.get(execution_id)
+            if exec_data is None:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": f"Execution '{execution_id}' not found"},
+                )
+            return exec_data
+        except Exception:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Execution '{execution_id}' not found"},
+            )
 
     # Build failure analysis if applicable
     failure_analysis = None
@@ -386,6 +402,38 @@ async def get_execution_detail(execution_id: str):
         result["failure_analysis"] = failure_analysis.to_dict()
 
     return result
+
+
+@router.get("/admin/pipelines/executions/{execution_id}/summary")
+async def get_execution_summary(execution_id: str):
+    """Get a compact summary of an execution (no full stage details)."""
+    from app.pipeline.observability.store import execution_store
+
+    summary = execution_store.get(execution_id)
+    if summary is None:
+        # Try persistent store
+        try:
+            from app.pipeline.observability.persistent_store import get_persistent_store
+            persistent = get_persistent_store()
+            exec_data = persistent.get(execution_id)
+            if exec_data is None:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            # Return compact version
+            return {
+                "execution_id": exec_data.get("execution_id"),
+                "pipeline_id": exec_data.get("pipeline_id"),
+                "status": exec_data.get("status"),
+                "duration_ms": exec_data.get("duration_ms"),
+                "stage_count": exec_data.get("stage_count"),
+                "stages_completed": exec_data.get("stages_completed"),
+                "total_fallbacks": exec_data.get("total_fallbacks"),
+                "started_at": exec_data.get("started_at"),
+                "finished_at": exec_data.get("finished_at"),
+            }
+        except Exception:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+
+    return summary.to_list_row()
 
 
 @router.get("/admin/pipelines/executions/store/stats")
@@ -496,6 +544,25 @@ async def get_stage_scoring(model_id: str | None = None, stage_role: str | None 
                 "high_quality": breakdown.quality_score >= 0.7 and breakdown.quality_sample_count >= 3,
                 "low_quality": breakdown.quality_score < 0.35 and breakdown.quality_sample_count >= 3,
             })
+
+    # Enrich with cross-stage data from quality store
+    try:
+        from app.pipeline.observability.quality_scoring import quality_metrics_store
+        qs_summaries = quality_metrics_store.get_all_quality_summary(role=role)
+        qs_map = {f"{s['model_id']}:{s.get('provider_id', '')}": s for s in qs_summaries}
+        for s in scoring_results:
+            key = f"{s['model_id']}:{s['provider_id']}"
+            qs = qs_map.get(key, {})
+            s["downstream_corrections"] = qs.get("avg_downstream_corrections", 0)
+            s["review_actionability"] = qs.get("avg_review_actionability", 0.5)
+            s["refine_effectiveness"] = qs.get("avg_refine_effectiveness", 0.5)
+            s["final_improvement_score"] = qs.get("avg_final_improvement_score", 0.5)
+    except Exception:
+        for s in scoring_results:
+            s["downstream_corrections"] = 0
+            s["review_actionability"] = 0.5
+            s["refine_effectiveness"] = 0.5
+            s["final_improvement_score"] = 0.5
 
     # Sort by final score descending
     scoring_results.sort(key=lambda s: s["final_score"], reverse=True)
@@ -733,6 +800,55 @@ async def get_stage_quality_for_role(role: str):
     """Get quality breakdown for a specific stage role."""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url=f"/admin/pipelines/stage-quality?role={role}")
+
+
+@router.get("/admin/pipelines/stage-quality/cross-stage")
+async def get_cross_stage_quality(role: str | None = None, window: str | None = None):
+    """Get cross-stage quality diagnostics.
+
+    Returns downstream correction stats, review actionability,
+    refine effectiveness, and top/bottom models by cross-stage quality.
+    """
+    from app.pipeline.observability.quality_scoring import quality_metrics_store
+
+    summaries = quality_metrics_store.get_all_quality_summary(role=role, window=100)
+
+    # Enrich with cross-stage labels
+    for s in summaries:
+        avg_dc = s.get("avg_downstream_corrections", 0)
+        avg_ra = s.get("avg_review_actionability", 0.5)
+        avg_re = s.get("avg_refine_effectiveness", 0.5)
+
+        s["cross_stage_badges"] = []
+        if avg_dc > 3:
+            s["cross_stage_badges"].append("draft_often_corrected")
+        if avg_ra >= 0.7:
+            s["cross_stage_badges"].append("actionable_reviewer")
+        elif avg_ra < 0.3 and s.get("avg_quality", 0.5) > 0.4:
+            s["cross_stage_badges"].append("weak_reviewer")
+        if avg_re >= 0.7:
+            s["cross_stage_badges"].append("effective_refiner")
+        elif avg_re < 0.3 and s.get("avg_quality", 0.5) > 0.4:
+            s["cross_stage_badges"].append("overcorrected")
+
+    # Top/bottom by cross-stage quality
+    with_cross_data = [s for s in summaries if s.get("sample_count", 0) >= 3]
+    top_cross = sorted(
+        with_cross_data,
+        key=lambda s: s.get("avg_review_actionability", 0) + s.get("avg_refine_effectiveness", 0),
+        reverse=True,
+    )[:10]
+    bottom_cross = sorted(
+        with_cross_data,
+        key=lambda s: s.get("avg_review_actionability", 0) + s.get("avg_refine_effectiveness", 0),
+    )[:10]
+
+    return {
+        "cross_stage": summaries,
+        "total": len(summaries),
+        "top_cross_stage_quality": top_cross,
+        "bottom_cross_stage_quality": bottom_cross,
+    }
 
 
 @router.get("/admin/pipelines/stage-scoring/{role}")

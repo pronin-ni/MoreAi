@@ -19,6 +19,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.pipeline.observability.quality_scoring import (
+    CrossStageAnalyzer,
+    CrossStageSignals,
     QualityExtractor,
     QualityMetricsStore,
     QualitySignals,
@@ -188,7 +190,8 @@ class TestQualityScoring:
             output_length=30, has_structure=False, confidence=0.3,
         )
         score = extractor.compute_quality_score(signals, "generate")
-        assert score < 0.5
+        # Short output, no structure, but no corrections either → moderate score
+        assert 0.3 < score < 0.7
 
     def test_score_empty_output(self, extractor):
         signals = QualitySignals(output_length=0)
@@ -491,6 +494,201 @@ class TestQualityIntegration:
             assert "adjustment" in result["quality"]
             assert "sample_count" in result["quality"]
             assert "confidence" in result["quality"]
+
+
+# ── Cross-Stage Quality Tests ──
+
+
+class TestCrossStageAnalyzer:
+    def setup_method(self):
+        self.analyzer = CrossStageAnalyzer()
+
+    def test_analyze_generates_downstream_corrections(self):
+        """Generate stage receives correction count from review."""
+        stage_outputs = {
+            "gen": "Draft output with some claims.",
+            "review": "The draft has several errors: incorrect data, missing references.",
+            "refine": "Corrected version with proper references.",
+        }
+        stage_roles = {"gen": "generate", "review": "review", "refine": "refine"}
+        review_signals = QualitySignals(
+            issue_count=6, critical_count=1, major_count=2, minor_count=1,
+            output_length=200,
+        )
+        stage_signals = {"gen": QualitySignals(output_length=100), "review": review_signals, "refine": QualitySignals(output_length=300)}
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+
+        assert cross.downstream_corrections == 6
+        assert cross.correction_severity > 0.0
+
+    def test_review_actionability_computed(self):
+        """Review actionability reflects whether refine addressed review issues."""
+        stage_outputs = {
+            "gen": "Initial draft.",
+            "review": "Found incorrect data and missing references.",
+            "refine": "Fixed and corrected the data. Updated references.",
+        }
+        stage_roles = {"gen": "generate", "review": "review", "refine": "refine"}
+        review_signals = QualitySignals(
+            issue_count=4, major_count=2, output_length=150,
+        )
+        stage_signals = {"gen": QualitySignals(output_length=100), "review": review_signals, "refine": QualitySignals(output_length=300)}
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+
+        # Review found issues, refine has fix indicators → actionable
+        assert cross.review_actionability >= 0.4
+
+    def test_refine_effectiveness_computed(self):
+        """Refine effectiveness based on addressing issues and maintaining structure."""
+        stage_outputs = {
+            "gen": "Basic draft without structure.",
+            "review": "Several issues: incorrect, missing data.",
+            "refine": "**Corrected Version**\n\nFixed the issues and added structure.",
+        }
+        stage_roles = {"gen": "generate", "review": "review", "refine": "refine"}
+        review_signals = QualitySignals(issue_count=3, major_count=1, output_length=100)
+        stage_signals = {
+            "gen": QualitySignals(output_length=50),
+            "review": review_signals,
+            "refine": QualitySignals(output_length=200, has_structure=True),
+        }
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+
+        assert cross.refine_effectiveness > 0.4  # At least moderate
+
+    def test_unnecessary_full_rewrite_detected(self):
+        """Refine that rewrites everything without clear need is flagged."""
+        stage_outputs = {
+            "gen": "A solid draft with minor issues.",
+            "review": "Looks good overall. Minor typo on page 2.",
+            "refine": "COMPLETELY DIFFERENT TEXT THAT HAS NOTHING TO DO WITH ORIGINAL",
+        }
+        stage_roles = {"gen": "generate", "review": "review", "refine": "refine"}
+        review_signals = QualitySignals(issue_count=1, minor_count=1, output_length=50)
+        gen_signals = QualitySignals(output_length=500, has_structure=True)
+        stage_signals = {
+            "gen": gen_signals,
+            "review": review_signals,
+            "refine": QualitySignals(output_length=600),
+        }
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+
+        assert cross.unnecessary_full_rewrite is True
+
+    def test_apply_to_signals_updates_generate(self):
+        """apply_to_signals sets downstream_corrections on generate signals."""
+        stage_outputs = {"gen": "draft", "review": "found issues"}
+        stage_roles = {"gen": "generate", "review": "review"}
+        review_signals = QualitySignals(issue_count=5, major_count=2, output_length=100)
+        gen_signals = QualitySignals(output_length=200)
+        stage_signals = {"gen": gen_signals, "review": review_signals}
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+        self.analyzer.apply_to_signals(stage_signals, stage_roles, cross)
+
+        assert gen_signals.downstream_corrections == 5
+        assert gen_signals.confidence < 0.5  # Reduced due to corrections
+
+    def test_adjust_quality_score_generate_penalty(self):
+        """Generate quality is penalized for downstream corrections."""
+        cross = CrossStageSignals(
+            downstream_corrections=8, correction_severity=0.7,
+            refine_rewrite_ratio=0.9,
+        )
+        adjusted, reason = self.analyzer.adjust_quality_score(0.7, "generate", cross)
+        assert adjusted < 0.7
+        assert "many_downstream_corrections" in reason
+
+    def test_adjust_quality_score_review_reward(self):
+        """Review quality is rewarded for actionability."""
+        cross = CrossStageSignals(
+            downstream_corrections=3, review_actionability=0.85,
+            refinement_improved_structure=False,
+        )
+        adjusted, reason = self.analyzer.adjust_quality_score(0.6, "review", cross)
+        assert adjusted > 0.6
+        assert "actionable_review" in reason
+
+    def test_adjust_quality_score_refine_reward(self):
+        """Refine quality is rewarded for effectiveness."""
+        cross = CrossStageSignals(
+            refine_effectiveness=0.85, refinement_improved_structure=True,
+        )
+        adjusted, reason = self.analyzer.adjust_quality_score(0.5, "refine", cross)
+        assert adjusted > 0.5
+        assert "effective_refinement" in reason
+
+    def test_cross_stage_explanation_generated(self):
+        """Cross-stage explanation is non-empty for meaningful executions."""
+        stage_outputs = {
+            "gen": "Draft output.",
+            "review": "Found critical error in methodology and incorrect data.",
+            "refine": "Corrected the methodology and updated data.",
+        }
+        stage_roles = {"gen": "generate", "review": "review", "refine": "refine"}
+        review_signals = QualitySignals(issue_count=4, critical_count=1, major_count=1, output_length=150)
+        stage_signals = {
+            "gen": QualitySignals(output_length=100),
+            "review": review_signals,
+            "refine": QualitySignals(output_length=250),
+        }
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+
+        assert cross.cross_stage_explanation != "no cross-stage signals"
+        assert "downstream corrections" in cross.cross_stage_explanation.lower() or "refine" in cross.cross_stage_explanation.lower()
+
+    def test_no_generate_stage_returns_empty(self):
+        """Without generate stage, cross-stage returns defaults."""
+        stage_outputs = {"review": "review output"}
+        stage_roles = {"review": "review"}
+        stage_signals = {"review": QualitySignals(output_length=100)}
+
+        cross = self.analyzer.analyze(stage_outputs, stage_roles, stage_signals)
+
+        assert cross.downstream_corrections == 0
+        assert cross.review_actionability == 0.5
+
+    def test_storage_stores_cross_stage_fields(self, temp_quality_db):
+        """Quality store persists cross-stage fields."""
+        signals = QualitySignals(output_length=500, has_structure=True)
+        cross = CrossStageSignals(
+            downstream_corrections=3,
+            correction_severity=0.5,
+            review_actionability=0.7,
+            refine_effectiveness=0.6,
+            final_improvement_score=0.65,
+            cross_stage_explanation="test explanation",
+        )
+        temp_quality_db.record(
+            model_id="m1", provider_id="p1", transport="api",
+            role="generate", quality_score=0.6, signals=signals,
+            explanation="base", cross=cross,
+        )
+
+        summaries = temp_quality_db.get_all_quality_summary()
+        assert len(summaries) == 1
+        s = summaries[0]
+        assert s["avg_downstream_corrections"] == 3.0
+        assert abs(s["avg_correction_severity"] - 0.5) < 0.01
+        assert abs(s["avg_review_actionability"] - 0.7) < 0.01
+        assert abs(s["avg_refine_effectiveness"] - 0.6) < 0.01
+
+    def test_generate_score_with_corrections(self, extractor):
+        """Generate quality score decreases with more downstream corrections."""
+        # No corrections
+        sig0 = QualitySignals(output_length=1000, has_structure=True, downstream_corrections=0)
+        score0 = extractor.compute_quality_score(sig0, "generate")
+
+        # Many corrections
+        sig5 = QualitySignals(output_length=1000, has_structure=True, downstream_corrections=8)
+        score5 = extractor.compute_quality_score(sig5, "generate")
+
+        assert score0 > score5
 
 
 # ── Admin API Tests ──

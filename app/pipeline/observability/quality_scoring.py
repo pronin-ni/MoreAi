@@ -272,9 +272,9 @@ class QualityExtractor:
         """Score for generate stage.
 
         Factors:
-        - Output length (bounded): 30%
+        - Output length with structure: 30%
         - Structure: 20%
-        - No downstream corrections: 50%
+        - Downstream corrections: 50% (fewer = better)
         """
         # Length score: sigmoid-like curve, peaks at ~1000 chars
         length_score = min(1.0, signals.output_length / 1000.0) * 0.3
@@ -282,9 +282,16 @@ class QualityExtractor:
         # Structure bonus
         structure_score = 0.2 if signals.has_structure else 0.05
 
-        # Downstream corrections: the main signal (but tracked separately)
-        # Default: assume neutral (corrections tracked via cross-stage linking)
-        correction_score = 0.5  # Will be updated by cross-stage analysis
+        # Downstream corrections: the main cross-stage signal
+        # 0 corrections = 1.0, 1-2 = 0.7, 3-5 = 0.4, 6+ = 0.1
+        if signals.downstream_corrections == 0:
+            correction_score = 1.0
+        elif signals.downstream_corrections <= 2:
+            correction_score = 0.7
+        elif signals.downstream_corrections <= 5:
+            correction_score = 0.4
+        else:
+            correction_score = 0.1
 
         return length_score + structure_score + correction_score * 0.5
 
@@ -412,7 +419,14 @@ class QualityMetricsStore:
         rewrite_ratio REAL NOT NULL DEFAULT 0.0,
         output_length INTEGER NOT NULL DEFAULT 0,
         has_structure INTEGER NOT NULL DEFAULT 0,
-        explanation TEXT
+        explanation TEXT,
+        -- Cross-stage signals
+        downstream_corrections INTEGER NOT NULL DEFAULT 0,
+        correction_severity REAL NOT NULL DEFAULT 0.0,
+        review_actionability REAL NOT NULL DEFAULT 0.5,
+        refine_effectiveness REAL NOT NULL DEFAULT 0.5,
+        final_improvement_score REAL NOT NULL DEFAULT 0.5,
+        cross_stage_explanation TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_qm_model_role_ts ON quality_metrics(model_id, role, timestamp);
     CREATE INDEX IF NOT EXISTS idx_qm_timestamp ON quality_metrics(timestamp);
@@ -463,8 +477,20 @@ class QualityMetricsStore:
         quality_score: float,
         signals: QualitySignals,
         explanation: str = "",
+        cross: CrossStageSignals | None = None,
     ) -> None:
-        """Record a quality metrics entry."""
+        """Record a quality metrics entry.
+
+        Args:
+            model_id: The model that produced the output.
+            provider_id: The provider that served the model.
+            transport: The transport type (browser, api, agent).
+            role: The stage role (generate, review, critique, refine, verify).
+            quality_score: Computed quality score (0.0-1.0).
+            signals: Extracted quality signals.
+            explanation: Human-readable explanation of the score.
+            cross: Optional cross-stage signals for this execution.
+        """
         conn = self._connect()
         try:
             conn.execute(
@@ -472,8 +498,11 @@ class QualityMetricsStore:
                 INSERT INTO quality_metrics (
                     timestamp, model_id, provider_id, transport, role,
                     quality_score, issue_count, critical_count, major_count, minor_count,
-                    rewrite_ratio, output_length, has_structure, explanation
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rewrite_ratio, output_length, has_structure, explanation,
+                    downstream_corrections, correction_severity,
+                    review_actionability, refine_effectiveness,
+                    final_improvement_score, cross_stage_explanation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     time.time(),
@@ -490,6 +519,12 @@ class QualityMetricsStore:
                     signals.output_length,
                     1 if signals.has_structure else 0,
                     explanation,
+                    cross.downstream_corrections if cross else 0,
+                    cross.correction_severity if cross else 0.0,
+                    cross.review_actionability if cross else 0.5,
+                    cross.refine_effectiveness if cross else 0.5,
+                    cross.final_improvement_score if cross else 0.5,
+                    cross.cross_stage_explanation if cross else "",
                 ),
             )
             conn.commit()
@@ -637,7 +672,12 @@ class QualityMetricsStore:
                     ROUND(MIN(quality_score), 3) as min_quality,
                     ROUND(MAX(quality_score), 3) as max_quality,
                     ROUND(AVG(issue_count), 1) as avg_issues,
-                    ROUND(AVG(rewrite_ratio), 3) as avg_rewrite
+                    ROUND(AVG(rewrite_ratio), 3) as avg_rewrite,
+                    ROUND(AVG(downstream_corrections), 1) as avg_downstream_corrections,
+                    ROUND(AVG(correction_severity), 3) as avg_correction_severity,
+                    ROUND(AVG(review_actionability), 3) as avg_review_actionability,
+                    ROUND(AVG(refine_effectiveness), 3) as avg_refine_effectiveness,
+                    ROUND(AVG(final_improvement_score), 3) as avg_final_improvement_score
                 FROM quality_metrics
                 {where}
                 GROUP BY model_id, role
@@ -717,3 +757,406 @@ class QualityMetricsStore:
 # Global singletons
 quality_extractor = QualityExtractor()
 quality_metrics_store = QualityMetricsStore()
+
+
+# ── Cross-Stage Quality Linking ──
+
+
+@dataclass(slots=True)
+class CrossStageSignals:
+    """Cross-stage quality signals computed from a full pipeline execution.
+
+    Links generate → review/critique → refine → final outputs to derive
+    downstream quality signals that individual stage scoring cannot see.
+    """
+
+    # For generate stage
+    downstream_corrections: int = 0  # total issues found by review/critique
+    correction_severity: float = 0.0  # 0.0-1.0, weighted by severity
+    refine_rewrite_ratio: float = 0.0  # how much refine rewrote the generate output
+    final_differs_materially: bool = False  # final output significantly different from generate
+
+    # For review/critique stage
+    review_actionability: float = 0.5  # 0.0-1.0, were findings actually acted on?
+    issues_addressed_ratio: float = 0.0  # fraction of review issues that refine addressed
+    review_was_noise: bool = False  # review found issues but refine didn't change anything
+
+    # For refine stage
+    refine_effectiveness: float = 0.5  # 0.0-1.0, did refine actually improve things?
+    issues_fixed_ratio: float = 0.0  # fraction of review issues that were fixed
+    unnecessary_full_rewrite: bool = False  # rewrote everything when targeted fixes would suffice
+    refinement_improved_structure: bool = False
+
+    # Overall
+    final_improvement_score: float = 0.5  # 0.0-1.0, is the final output better than the draft?
+    cross_stage_explanation: str = ""  # human-readable explanation
+
+
+class CrossStageAnalyzer:
+    """Analyzes cross-stage quality signals within a pipeline execution.
+
+    Takes all stage outputs and derives linking metrics:
+    - How many review issues were actually addressed by refine?
+    - Did refine make targeted improvements or a blind full rewrite?
+    - Was the generate draft fundamentally flawed (needed heavy refinement)?
+
+    All metrics are heuristic-based and fully explainable — no ML.
+    """
+
+    def analyze(
+        self,
+        stage_outputs: dict[str, str],  # stage_id → full output text
+        stage_roles: dict[str, str],  # stage_id → role
+        stage_signals: dict[str, QualitySignals],  # stage_id → already-extracted signals
+    ) -> CrossStageSignals:
+        """Compute cross-stage signals from a complete pipeline execution.
+
+        Args:
+            stage_outputs: Full output text per stage_id.
+            stage_roles: Role name per stage_id.
+            stage_signals: Pre-extracted quality signals per stage_id.
+
+        Returns:
+            CrossStageSignals with linking metrics.
+        """
+        result = CrossStageSignals()
+
+        # Identify stages by role
+        generate_id = self._find_stage(stage_roles, "generate")
+        review_ids = self._find_stages(stage_roles, ("review", "critique"))
+        refine_id = self._find_stage(stage_roles, "refine")
+
+        if not generate_id or generate_id not in stage_outputs:
+            return result  # No generate stage → nothing to link
+
+        generate_output = stage_outputs.get(generate_id, "")
+
+        # ── Compute review findings ──
+        review_issues = 0
+        review_critical = 0
+        review_major = 0
+        for rid in review_ids:
+            sig = stage_signals.get(rid)
+            if sig:
+                review_issues += sig.issue_count
+                review_critical += sig.critical_count
+                review_major += sig.major_count
+
+        result.downstream_corrections = review_issues
+        result.correction_severity = self._compute_severity_score(
+            review_critical, review_major, review_issues,
+        )
+
+        # ── Compute refine signals ──
+        if refine_id and refine_id in stage_outputs:
+            refine_output = stage_outputs[refine_id]
+            refine_input = generate_output  # refine typically takes generate as input
+
+            rewrite_ratio = QualityExtractor._compute_rewrite_ratio(
+                refine_input, refine_output,
+            )
+            result.refine_rewrite_ratio = rewrite_ratio
+
+            # Check if refine addressed review issues
+            if review_issues > 0 and refine_output:
+                result.issues_addressed_ratio = self._compute_issues_addressed(
+                    review_ids, stage_signals, refine_output,
+                )
+                result.review_actionability = result.issues_addressed_ratio
+            elif review_issues == 0:
+                # Review found nothing — check if refine still made changes
+                if rewrite_ratio < 0.05:
+                    result.review_actionability = 0.5  # Neutral — nothing to act on
+                    result.review_was_noise = False
+                else:
+                    # Review said nothing but refine still changed a lot
+                    result.review_actionability = 0.3  # Review may have missed issues
+                    result.review_was_noise = True
+            else:
+                result.review_actionability = 0.3
+
+            # Refine effectiveness
+            result.refine_effectiveness = self._compute_refine_effectiveness(
+                generate_output, refine_output, review_issues,
+                result.issues_addressed_ratio, rewrite_ratio,
+            )
+            result.issues_fixed_ratio = result.issues_addressed_ratio
+
+            # Unnecessary full rewrite detection
+            if rewrite_ratio > 0.8 and review_issues < 3:
+                result.unnecessary_full_rewrite = True
+
+            # Structure improvement
+            gen_has_structure = QualityExtractor._detect_structure(generate_output)
+            ref_has_structure = QualityExtractor._detect_structure(refine_output)
+            result.refinement_improved_structure = (
+                not gen_has_structure and ref_has_structure
+            )
+
+            # Final differs materially from generate
+            result.final_differs_materially = rewrite_ratio > 0.5
+        else:
+            # No refine stage — final = generate (or generate was directly used)
+            result.refine_effectiveness = 0.5
+            result.final_differs_materially = False
+
+        # Final improvement score
+        result.final_improvement_score = self._compute_final_improvement(
+            result.refine_effectiveness,
+            result.refine_rewrite_ratio,
+            result.correction_severity,
+            review_ids,
+            stage_signals,
+        )
+
+        # Explanation
+        result.cross_stage_explanation = self._explain(result, review_issues)
+
+        return result
+
+    def apply_to_signals(
+        self,
+        stage_signals: dict[str, QualitySignals],
+        stage_roles: dict[str, str],
+        cross: CrossStageSignals,
+    ) -> None:
+        """Update QualitySignals with cross-stage corrections.
+
+        Modifies signals in-place:
+        - generate.downstream_corrections = cross.downstream_corrections
+        - generate confidence reduced if many corrections
+        """
+        generate_id = self._find_stage(stage_roles, "generate")
+        if generate_id and generate_id in stage_signals:
+            gen_sig = stage_signals[generate_id]
+            gen_sig.downstream_corrections = cross.downstream_corrections
+
+            # Reduce confidence if many downstream corrections
+            if cross.downstream_corrections > 5:
+                gen_sig.confidence = max(0.2, gen_sig.confidence - 0.3)
+            elif cross.downstream_corrections > 2:
+                gen_sig.confidence = max(0.4, gen_sig.confidence - 0.15)
+
+    def adjust_quality_score(
+        self,
+        base_score: float,
+        role: str,
+        cross: CrossStageSignals,
+        stage_id: str = "",
+        stage_roles: dict[str, str] | None = None,
+    ) -> tuple[float, str]:
+        """Adjust a quality score based on cross-stage signals.
+
+        Returns (adjusted_score, reason).
+
+        For generate: penalized by downstream correction severity.
+        For review: rewarded/punished by actionability.
+        For refine: rewarded/punished by effectiveness.
+        """
+        adjustment = 0.0
+        reasons: list[str] = []
+
+        if role == "generate":
+            # Penalize for downstream corrections
+            if cross.downstream_corrections > 5:
+                adjustment -= 0.20
+                reasons.append(f"many_downstream_corrections({cross.downstream_corrections})")
+            elif cross.downstream_corrections > 2:
+                adjustment -= 0.10
+                reasons.append(f"moderate_corrections({cross.downstream_corrections})")
+
+            # Penalize if refine had to do a full rewrite
+            if cross.refine_rewrite_ratio > 0.8:
+                adjustment -= 0.10
+                reasons.append("heavy_refine_needed")
+
+            # Penalize for high severity corrections
+            if cross.correction_severity > 0.6:
+                adjustment -= 0.05
+                reasons.append("high_severity_issues")
+
+        elif role in ("review", "critique"):
+            # Reward actionable reviews
+            if cross.review_actionability >= 0.7:
+                adjustment += 0.10
+                reasons.append("actionable_review")
+            elif cross.review_actionability < 0.3 and cross.downstream_corrections > 0:
+                adjustment -= 0.10
+                reasons.append("review_not_actionable")
+
+            # Penalize noise reviews (found issues that weren't real)
+            if cross.review_was_noise:
+                adjustment -= 0.08
+                reasons.append("review_was_noise")
+
+        elif role == "refine":
+            # Reward effective refinement
+            if cross.refine_effectiveness >= 0.7:
+                adjustment += 0.10
+                reasons.append("effective_refinement")
+            elif cross.refine_effectiveness < 0.3:
+                adjustment -= 0.10
+                reasons.append("ineffective_refinement")
+
+            # Penalize unnecessary full rewrites
+            if cross.unnecessary_full_rewrite:
+                adjustment -= 0.08
+                reasons.append("unnecessary_full_rewrite")
+
+            # Reward structure improvement
+            if cross.refinement_improved_structure:
+                adjustment += 0.05
+                reasons.append("improved_structure")
+
+        adjusted = max(_MIN_QUALITY, min(_MAX_QUALITY, base_score + adjustment))
+        reason = ", ".join(reasons) if reasons else "no_cross_stage_impact"
+
+        return adjusted, reason
+
+    # ── Internal computation methods ──
+
+    def _compute_issues_addressed(
+        self,
+        review_ids: list[str],
+        stage_signals: dict[str, QualitySignals],
+        refine_output: str,
+    ) -> float:
+        """Estimate what fraction of review issues were addressed by refine.
+
+        Heuristic: check if review-issue-related terms appear less in refine
+        output, and whether refinement indicators are present.
+        """
+        refine_lower = refine_output.lower()
+
+        # Check for fix/improvement indicators in refine output
+        fix_indicators = ["fixed", "corrected", "addressed", "resolved", "improved", "updated"]
+        fix_count = sum(1 for ind in fix_indicators if ind in refine_lower)
+
+        # Check if refinement output still contains negative critique patterns
+        negative_patterns = ["incorrect", "wrong", "missing", "error", "problem", "issue"]
+        still_negative = sum(1 for p in negative_patterns if p in refine_lower)
+
+        if fix_count > 0 and still_negative == 0:
+            return min(1.0, 0.5 + fix_count * 0.15)
+        elif fix_count > 0:
+            return 0.4 + fix_count * 0.1
+        elif still_negative > 2:
+            return 0.2  # Issues still present
+        else:
+            return 0.5  # Neutral — can't determine
+
+    def _compute_severity_score(
+        self, critical: int, major: int, total: int,
+    ) -> float:
+        """Compute weighted severity score from issue counts."""
+        if total == 0:
+            return 0.0
+        weighted = critical * 3 + major * 2 + (total - critical - major) * 1
+        max_possible = total * 3
+        return weighted / max_possible if max_possible > 0 else 0.0
+
+    def _compute_refine_effectiveness(
+        self,
+        generate_output: str,
+        refine_output: str,
+        review_issues: int,
+        issues_addressed: float,
+        rewrite_ratio: float,
+    ) -> float:
+        """Compute how effective the refine stage was.
+
+        Effective = addressed review issues + maintained/improved structure
+        - moderate rewrite, not a blind full rewrite.
+        """
+        score = 0.5  # Baseline
+
+        # Issues addressed is the primary signal
+        if review_issues > 0:
+            score = issues_addressed * 0.6 + 0.2
+        else:
+            # No issues to address — check if refine made useful changes
+            if rewrite_ratio < 0.05:
+                score = 0.3  # Almost no change
+            elif 0.05 <= rewrite_ratio <= 0.5:
+                score = 0.6  # Moderate improvement
+            else:
+                score = 0.4  # Large change without clear need
+
+        # Bonus for structure improvement
+        gen_structured = QualityExtractor._detect_structure(generate_output)
+        ref_structured = QualityExtractor._detect_structure(refine_output)
+        if not gen_structured and ref_structured:
+            score += 0.1
+
+        return max(0.0, min(1.0, score))
+
+    def _compute_final_improvement(
+        self,
+        refine_effectiveness: float,
+        refine_rewrite_ratio: float,
+        correction_severity: float,
+        review_ids: list[str],
+        stage_signals: dict[str, QualitySignals],
+    ) -> float:
+        """Compute overall final improvement score.
+
+        High if: refine was effective, corrections were addressed, structure improved.
+        Low if: heavy rewrite with low effectiveness, high-severity issues remain.
+        """
+        score = 0.5
+
+        # Refine effectiveness is the main driver
+        score += (refine_effectiveness - 0.5) * 0.4
+
+        # Moderate rewrite is better than no rewrite or total rewrite
+        if 0.1 <= refine_rewrite_ratio <= 0.6:
+            score += 0.1
+        elif refine_rewrite_ratio > 0.8:
+            score -= 0.1
+
+        # High correction severity that was addressed = good outcome
+        if correction_severity > 0.5 and refine_effectiveness > 0.6:
+            score += 0.1
+
+        return max(0.0, min(1.0, score))
+
+    def _explain(self, cross: CrossStageSignals, review_issues: int) -> str:
+        """Generate human-readable explanation of cross-stage analysis."""
+        parts: list[str] = []
+
+        if cross.downstream_corrections > 0:
+            sev = "high" if cross.correction_severity > 0.6 else "moderate" if cross.correction_severity > 0.3 else "low"
+            parts.append(f"generate: {cross.downstream_corrections} downstream corrections ({sev} severity)")
+
+        if review_issues > 0:
+            action = "actionable" if cross.review_actionability >= 0.6 else "partially actionable" if cross.review_actionability >= 0.3 else "not actionable"
+            parts.append(f"review: {action} ({cross.review_actionability:.2f})")
+
+        if cross.refine_effectiveness > 0:
+            eff = "effective" if cross.refine_effectiveness >= 0.6 else "moderately effective" if cross.refine_effectiveness >= 0.4 else "ineffective"
+            parts.append(f"refine: {eff} ({cross.refine_effectiveness:.2f})")
+
+        if cross.unnecessary_full_rewrite:
+            parts.append("refine: unnecessary full rewrite")
+
+        if cross.refinement_improved_structure:
+            parts.append("refine: improved structure")
+
+        return "; ".join(parts) if parts else "no cross-stage signals"
+
+    @staticmethod
+    def _find_stage(stage_roles: dict[str, str], role: str) -> str | None:
+        """Find first stage ID matching a role."""
+        for sid, r in stage_roles.items():
+            if r == role:
+                return sid
+        return None
+
+    @staticmethod
+    def _find_stages(stage_roles: dict[str, str], roles: tuple[str, ...]) -> list[str]:
+        """Find all stage IDs matching any of the given roles."""
+        return [sid for sid, r in stage_roles.items() if r in roles]
+
+
+# Cross-stage singleton
+cross_stage_analyzer = CrossStageAnalyzer()

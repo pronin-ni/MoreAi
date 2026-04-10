@@ -1759,6 +1759,9 @@
                 if (s.top_performer) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">top</span>');
                 if (s.high_quality) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">high_quality</span>');
                 if (s.low_quality) badges.push('<span class="badge badge-red" style="font-size: 0.6rem;">low_quality</span>');
+                if (s.downstream_corrections > 3) badges.push('<span class="badge badge-yellow" style="font-size: 0.6rem;">draft_corrected</span>');
+                if (s.review_actionability >= 0.7) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">actionable_review</span>');
+                if (s.refine_effectiveness >= 0.7) badges.push('<span class="badge badge-green" style="font-size: 0.6rem;">effective_refine</span>');
 
                 const qualityColor = s.quality_sample_count >= 3 ?
                     (s.quality_score >= 0.6 ? 'var(--admin-success)' : s.quality_score < 0.4 ? 'var(--admin-error)' : 'var(--admin-text-muted)') :

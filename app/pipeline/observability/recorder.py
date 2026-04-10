@@ -76,63 +76,104 @@ class ObservabilityRecorder:
         """Record per-stage performance metrics for future ranking.
 
         Also extracts quality signals from full stage outputs (before truncation).
+        Runs cross-stage analysis to link generate → review → refine outputs.
         """
         try:
             from app.pipeline.observability.stage_perf import RolePerformanceEntry
             from app.pipeline.observability.stage_perf import stage_performance as perf_tracker
 
-            # Quality extraction (full output available in ctx.stage_outputs)
-            quality_score = 0.5
-            quality_signals = None
-            quality_explanation = ""
-
             try:
                 from app.pipeline.observability.quality_scoring import (
+                    cross_stage_analyzer,
                     quality_extractor,
                     quality_metrics_store,
                 )
 
+                # Step 1: Extract per-stage quality signals
+                stage_signals: dict[str, object] = {}
+                stage_outputs_text: dict[str, str] = {}
+                stage_roles_map: dict[str, str] = {}
+
                 for stage_summary in summary.stage_summaries:
-                    # Get full output from context (not truncated)
                     stage_result = ctx.stage_outputs.get(stage_summary.stage_id)
                     full_output = stage_result.output if stage_result else ""
                     input_text = ctx.get_previous_output(stage_summary.stage_id) or ""
 
-                    # Extract quality signals
                     signals = quality_extractor.extract(
                         full_output,
                         stage_summary.stage_role,
                         input_text,
                     )
+                    stage_signals[stage_summary.stage_id] = signals
+                    stage_outputs_text[stage_summary.stage_id] = full_output
+                    stage_roles_map[stage_summary.stage_id] = stage_summary.stage_role
+
+                # Step 2: Cross-stage analysis
+                cross = cross_stage_analyzer.analyze(
+                    stage_outputs=stage_outputs_text,
+                    stage_roles=stage_roles_map,
+                    stage_signals=stage_signals,  # type: ignore[arg-type]
+                )
+
+                # Step 3: Apply cross-stage corrections to generate signals
+                cross_stage_analyzer.apply_to_signals(
+                    stage_signals=stage_signals,  # type: ignore[arg-type]
+                    stage_roles=stage_roles_map,
+                    cross=cross,
+                )
+
+                # Step 4: Record per-stage quality with cross-stage adjustment
+                for stage_summary in summary.stage_summaries:
+                    signals = stage_signals.get(stage_summary.stage_id)
+                    if not signals:
+                        continue
+
                     qs = quality_extractor.compute_quality_score(
                         signals, stage_summary.stage_role,
                     )
-                    quality_explanation = quality_extractor.explain_score(
-                        signals, qs, stage_summary.stage_role,
+
+                    # Apply cross-stage adjustment
+                    adjusted_qs, cross_reason = cross_stage_analyzer.adjust_quality_score(
+                        base_score=qs,
+                        role=stage_summary.stage_role,
+                        cross=cross,
+                        stage_id=stage_summary.stage_id,
+                        stage_roles=stage_roles_map,
                     )
 
-                    # Store quality metrics
+                    explanation = quality_extractor.explain_score(
+                        signals, adjusted_qs, stage_summary.stage_role,
+                    )
+                    if cross_reason and cross_reason != "no_cross_stage_impact":
+                        explanation += f" | cross_stage: {cross_reason}"
+
                     quality_metrics_store.record(
                         model_id=stage_summary.selected_model or "",
                         provider_id=stage_summary.selected_provider or "",
                         transport=stage_summary.selected_transport or "",
                         role=stage_summary.stage_role,
-                        quality_score=qs,
+                        quality_score=adjusted_qs,
                         signals=signals,
-                        explanation=quality_explanation,
+                        explanation=explanation,
+                        cross=cross,
                     )
-                    quality_score = qs
-                    quality_signals = signals
+
+                # Store cross-stage summary in context metadata for traceability
+                ctx.metadata["cross_stage_signals"] = {
+                    "downstream_corrections": cross.downstream_corrections,
+                    "correction_severity": round(cross.correction_severity, 3),
+                    "review_actionability": round(cross.review_actionability, 3),
+                    "refine_effectiveness": round(cross.refine_effectiveness, 3),
+                    "final_improvement_score": round(cross.final_improvement_score, 3),
+                    "explanation": cross.cross_stage_explanation,
+                }
+
             except Exception as exc:
                 logger.debug("quality_extraction_failed", error=str(exc))
 
             # Record stage performance (with quality hint)
             for stage_summary in summary.stage_summaries:
-                # If we have quality signals, use the computed quality score;
-                # otherwise fall back to the old binary heuristic
-                q_hint = quality_score if quality_signals else (
-                    1.0 if stage_summary.output_summary else 0.0
-                )
+                q_hint = 1.0 if stage_summary.output_summary else 0.0
 
                 entry = RolePerformanceEntry(
                     model_id=stage_summary.selected_model or "",
@@ -262,6 +303,33 @@ class ObservabilityRecorder:
                 if stage.status == "failed":
                     summary.failed_stage = stage.stage_id
                     break
+
+        # Attach cross-stage signals from context metadata to relevant stages
+        cross_signals = ctx.metadata.get("cross_stage_signals")
+        if cross_signals:
+            for stage_summary in summary.stage_summaries:
+                role = stage_summary.stage_role
+                if role == "generate":
+                    stage_summary.quality_explanation = cross_signals.get("explanation", "")
+                    stage_summary.cross_stage = {
+                        "downstream_corrections": cross_signals.get("downstream_corrections", 0),
+                        "correction_severity": cross_signals.get("correction_severity", 0.0),
+                        "refine_rewrite_ratio": cross_signals.get("refine_rewrite_ratio", 0.0),
+                        "final_improvement_score": cross_signals.get("final_improvement_score", 0.5),
+                    }
+                elif role in ("review", "critique"):
+                    stage_summary.cross_stage = {
+                        "review_actionability": cross_signals.get("review_actionability", 0.5),
+                        "issues_addressed_ratio": cross_signals.get("review_actionability", 0.5),
+                        "review_was_noise": cross_signals.get("review_was_noise", False),
+                    }
+                elif role == "refine":
+                    stage_summary.cross_stage = {
+                        "refine_effectiveness": cross_signals.get("refine_effectiveness", 0.5),
+                        "issues_fixed_ratio": cross_signals.get("refine_effectiveness", 0.5),
+                        "unnecessary_full_rewrite": cross_signals.get("unnecessary_full_rewrite", False),
+                        "refinement_improved_structure": cross_signals.get("refinement_improved_structure", False),
+                    }
 
         return summary
 
@@ -398,12 +466,31 @@ class ObservabilityRecorder:
             else:
                 viable_count += 1
 
+            # Extract full scoring breakdown if available
+            scoring_breakdown: dict[str, Any] = {}
+            sb = c.get("scoring_breakdown")
+            if sb:
+                scoring_breakdown = {
+                    "base_static_score": sb.get("base_static_score"),
+                    "dynamic_adjustment": sb.get("dynamic_adjustment"),
+                    "failure_penalty": sb.get("failure_penalty"),
+                    "penalty_reasons": sb.get("penalty_reasons", []),
+                }
+                perf = sb.get("performance", {})
+                if perf:
+                    scoring_breakdown["performance"] = {
+                        "success_rate": perf.get("success_rate"),
+                        "fallback_rate": perf.get("fallback_rate"),
+                        "sample_count": perf.get("sample_count"),
+                    }
+
             candidate_explains.append(CandidateExplain(
                 model_id=c.get("model_id", ""),
                 provider_id=c.get("provider_id", ""),
                 transport=c.get("transport", ""),
                 rank=c.get("rank", 0),
                 score=c.get("final_score", c.get("scores", {}).get("final", 0)),
+                scoring_breakdown=scoring_breakdown,
                 excluded=is_excluded,
                 exclusion_reason=c.get("excluded_reason", ""),
                 selected=is_selected,
