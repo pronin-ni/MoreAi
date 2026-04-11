@@ -44,7 +44,6 @@ def build_integration_definitions() -> list[IntegrationDefinition]:
     route_ids = {
         "Nvidia": "nvidia-api",
         "DeepInfra": "deepinfra",
-        "OpenRouter": "openrouter",
         "Google Gemini": "gemini-openai",
         "xAI": "xai",
         "Together": "together",
@@ -55,7 +54,11 @@ def build_integration_definitions() -> list[IntegrationDefinition]:
         "Auto Provider & Model Selection": "g4f-auto",
     }
     for entry in parsed.supported_api_routes:
-        integration_id = route_ids[entry["display_name"]]
+        display_name = entry["display_name"]
+        # OpenRouter is handled separately with a custom adapter
+        if display_name == "OpenRouter":
+            continue
+        integration_id = route_ids[display_name]
         definitions.append(
             IntegrationDefinition(
                 integration_id=integration_id,
@@ -69,6 +72,22 @@ def build_integration_definitions() -> list[IntegrationDefinition]:
                 fallback_models=["default"] if integration_id == "g4f-auto" else [],
             )
         )
+
+    # OpenRouter: custom definition with dedicated adapter
+    definitions.append(
+        IntegrationDefinition(
+            integration_id="openrouter",
+            display_name="OpenRouter",
+            integration_type="openai_compatible",
+            group="supported_api_route",
+            source_type="external_api",
+            base_url="https://openrouter.ai/api/v1",
+            api_key_requirement="required",
+            notes="OpenRouter API — supports free model filtering via OPENROUTER_ONLY_FREE",
+            enabled_by_default=True,
+            fallback_models=[],
+        )
+    )
 
     client_defaults = {
         "Pollinations AI": "https://g4f.space/api/pollinations",

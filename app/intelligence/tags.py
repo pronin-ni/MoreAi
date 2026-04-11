@@ -166,6 +166,8 @@ class CapabilityRegistry:
         default tag {STABLE} so they are not penalized in ranking.
         They start without special bonuses (no fast, reasoning_strong, etc.)
         but are fully eligible for selection.
+
+        Additionally infers tags from model metadata when available.
         """
         model_tags = self._model_tags.get(model_id, set())
         provider_tags = self._provider_tags.get(provider_id, set())
@@ -175,7 +177,59 @@ class CapabilityRegistry:
         if not combined:
             combined = {CapabilityTag.STABLE.value}
 
+        # Infer additional tags from metadata (conservative, non-overriding)
+        inferred = self._infer_tags_from_metadata(model_id, provider_id)
+        combined = combined | inferred
+
         return combined
+
+    def _infer_tags_from_metadata(self, model_id: str, provider_id: str) -> set[str]:
+        """Conservatively infer tags from model/provider metadata.
+
+        This uses metadata from the unified registry to make safe,
+        evidence-based tag inferences. Rules:
+        - :free suffix in model_id → cheap (free models are cost-effective)
+        - API transport from known free providers → api_preferred
+        - Models from openrouter with reasoning in name → reasoning_strong
+        - Provider name patterns for known capable systems
+
+        Important: these inferences are ADDITIVE only — they never
+        override or remove existing tags. They use conservative signals
+        to avoid overclaiming capabilities.
+        """
+        inferred: set[str] = set()
+        model_id_lower = model_id.lower()
+
+        # Free models are cost-effective
+        if model_id_lower.endswith(":free"):
+            inferred.add(CapabilityTag.CHEAP.value)
+
+        # Router model for free tier
+        if "openrouter/free" in model_id_lower or model_id_lower == "openrouter/free":
+            inferred.add(CapabilityTag.CHEAP.value)
+            inferred.add(CapabilityTag.API_PREFERRED.value)
+
+        # Models with "reasoning" or "think" in name often have reasoning capabilities
+        if any(kw in model_id_lower for kw in ["reasoning", "think", "r1", "o1", "o3"]):
+            inferred.add(CapabilityTag.REASONING_STRONG.value)
+
+        # Models with "code" in name
+        if "code" in model_id_lower:
+            inferred.add(CapabilityTag.CODE_STRONG.value)
+
+        # Long context models
+        if any(kw in model_id_lower for kw in ["128k", "200k", "256k", "1m", "1024k"]):
+            inferred.add(CapabilityTag.LONG_CONTEXT.value)
+
+        # API providers are generally more stable than browser
+        if provider_id and provider_id.lower() in (
+            "openrouter", "nvidia-api", "deepinfra", "together",
+            "openai", "xai", "gemini-openai", "grok",
+        ):
+            inferred.add(CapabilityTag.API_PREFERRED.value)
+            inferred.add(CapabilityTag.STABLE.value)
+
+        return inferred
 
     def has_tag(self, model_id: str, provider_id: str, tag: str) -> bool:
         """Check if a model+provider has a specific tag."""

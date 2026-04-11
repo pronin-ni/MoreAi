@@ -1,11 +1,13 @@
 import asyncio
 import time
+from typing import Any
 
 from app.core.logging import get_logger
 from app.integrations.adapters import (
     ClientBasedIntegration,
     OllamaFreeAPIIntegration,
     OpenAICompatibleIntegration,
+    OpenRouterIntegration,
 )
 from app.integrations.config import load_integrations_config
 from app.integrations.definitions import READY_TO_USE_DEFINITIONS
@@ -19,7 +21,7 @@ class APIRegistry:
         self._definitions: dict[str, IntegrationDefinition] = {
             definition.integration_id: definition for definition in READY_TO_USE_DEFINITIONS
         }
-        self._adapters: dict[str, OpenAICompatibleIntegration] = {}
+        self._adapters: dict[str, Any] = {}
         self._models: dict[str, ModelDefinition] = {}
         self._cooldowns: dict[str, float] = {}
         self._initialized = False
@@ -30,7 +32,7 @@ class APIRegistry:
         logger.info("Starting API registry refresh")
         async with self._lock:
             # Build new state in isolation — current state stays live during discovery
-            new_adapters: dict[str, OpenAICompatibleIntegration] = {}
+            new_adapters: dict[str, Any] = {}
             new_models: dict[str, ModelDefinition] = {}
 
             config_snapshot = load_integrations_config(list(self._definitions.values()))
@@ -159,9 +161,123 @@ class APIRegistry:
     def discovered_models(self) -> list[str]:
         return sorted(self._models.keys())
 
+    async def refresh_provider(self, integration_id: str) -> dict:
+        """Re-run discovery for a single integration and merge results atomically.
+
+        Returns a dict with: integration_id, model_count, status, error (if any).
+        Does NOT affect other integrations — last-known-good preserved on failure.
+        """
+        if integration_id not in self._definitions:
+            return {"integration_id": integration_id, "status": "not_found", "model_count": 0}
+
+        definition = self._definitions[integration_id]
+        config_snapshot = load_integrations_config([definition])
+        runtime_config = config_snapshot.by_integration[integration_id]
+        adapter_cls = self._adapter_class_for(definition)
+        adapter = adapter_cls(definition, runtime_config)
+
+        try:
+            model_definitions = await adapter.discover_models()
+        except Exception as exc:
+            logger.warning(
+                "Provider refresh failed — keeping last-known-good",
+                integration_id=integration_id,
+                error=str(exc),
+            )
+            # Update adapter status in existing adapters (if present)
+            if integration_id in self._adapters:
+                old_adapter = self._adapters[integration_id]
+                old_adapter.status.last_refresh_status = "failed"
+                old_adapter.status.last_refresh_error = str(exc)
+                old_adapter.status.last_refresh_at = time.time()
+            return {
+                "integration_id": integration_id,
+                "status": "failed",
+                "error": str(exc),
+                "model_count": len([m for m in self._models.values() if m.provider_id == integration_id]),
+            }
+
+        # Atomic merge: build new models dict for this provider only
+        async with self._lock:
+            old_models_for_provider = {
+                mid: m for mid, m in self._models.items() if m.provider_id == integration_id
+            }
+            # Remove old models for this provider
+            new_models = {mid: m for mid, m in self._models.items() if m.provider_id != integration_id}
+            # Add new models
+            for model_def in model_definitions:
+                new_models[model_def.id] = model_def
+
+            # Update adapter
+            self._adapters[integration_id] = adapter
+            self._models = new_models
+
+        # Compute diff
+        old_ids = set(old_models_for_provider.keys())
+        new_ids = {m.id for m in model_definitions}
+        added = sorted(new_ids - old_ids)
+        removed = sorted(old_ids - new_ids)
+
+        if added or removed:
+            logger.info(
+                "Provider model diff",
+                integration_id=integration_id,
+                added=str(added),
+                removed=str(removed),
+                total_models=str(len(new_ids)),
+            )
+
+        return {
+            "integration_id": integration_id,
+            "status": "ok",
+            "model_count": len(model_definitions),
+            "added": added,
+            "removed": removed,
+        }
+
+    def get_provider_status(self) -> list[dict]:
+        """Return per-provider status for the discovery admin endpoint."""
+        statuses: list[dict] = []
+
+        # Providers with active adapters
+        for integration_id, adapter in self._adapters.items():
+            status_data = adapter.diagnostics()
+            status_data["model_count"] = len(
+                [m for m in self._models.values() if m.provider_id == integration_id]
+            )
+            status_data["rate_limited"] = self.is_rate_limited(integration_id)
+            statuses.append(status_data)
+
+        # Providers defined but not yet initialized
+        for integration_id in self._definitions:
+            if integration_id not in self._adapters:
+                definition = self._definitions[integration_id]
+                statuses.append({
+                    "integration_id": integration_id,
+                    "display_name": definition.display_name,
+                    "integration_type": definition.integration_type,
+                    "source_type": definition.source_type,
+                    "transport": "api",
+                    "enabled": False,
+                    "available": False,
+                    "status": "not_initialized",
+                    "model_count": 0,
+                    "discovered_models": [],
+                    "models_discovered_count": 0,
+                    "last_refresh_status": "not_started",
+                    "last_refresh_error": None,
+                    "last_refresh_at": None,
+                    "rate_limited": False,
+                })
+
+        statuses.sort(key=lambda s: s["display_name"].lower())
+        return statuses
+
     def _adapter_class_for(self, definition: IntegrationDefinition):
         if definition.integration_id == "ollamafreeapi":
             return OllamaFreeAPIIntegration
+        if definition.integration_id == "openrouter":
+            return OpenRouterIntegration
         if definition.integration_type == "client_based":
             return ClientBasedIntegration
         return OpenAICompatibleIntegration

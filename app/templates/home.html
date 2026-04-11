@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23ffffff'/%3E%3Ctext x='32' y='44' font-family='monospace' font-size='36' font-weight='300' text-anchor='middle' fill='%231f2228'%3EM%3C/text%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/static/css/home.css">
+    <link rel="stylesheet" href="/static/css/home.css?v=2">
 </head>
 <body>
 
@@ -349,24 +349,6 @@ print(response.choices[0].message.content)</code></pre>
             window.addEventListener('scroll', function() {
                 nav.classList.toggle('topnav-scrolled', window.scrollY > 60);
             }, { passive: true });
-        }
-
-        // ── Intersection Observer for fade-in ──
-        if ('IntersectionObserver' in window) {
-            var sections = document.querySelectorAll('.section');
-            var observer = new IntersectionObserver(function(entries) {
-                entries.forEach(function(entry) {
-                    if (entry.isIntersecting) {
-                        entry.target.classList.add('section-visible');
-                        observer.unobserve(entry.target);
-                    }
-                });
-            }, { threshold: 0.08 });
-            sections.forEach(function(s) { observer.observe(s); });
-        } else {
-            document.querySelectorAll('.section').forEach(function(s) {
-                s.classList.add('section-visible');
-            });
         }
 
         // ── Fetch and render model list ──

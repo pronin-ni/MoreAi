@@ -30,9 +30,22 @@ def load_integrations_config(
         if not isinstance(integration_overrides, dict):
             integration_overrides = {}
 
-        base_enabled = settings.integrations_enabled and definition.enabled_by_default
+        # OpenRouter: resolve enabled from settings
+        if definition.integration_id == "openrouter":
+            base_enabled = settings.openrouter.enabled
+        else:
+            base_enabled = settings.integrations_enabled and definition.enabled_by_default
+
         enabled = bool(integration_overrides.get("enabled", base_enabled))
-        base_url = integration_overrides.get("base_url", definition.base_url)
+
+        # OpenRouter: resolve base_url from settings
+        if definition.integration_id == "openrouter":
+            if not integration_overrides.get("base_url"):
+                base_url = settings.openrouter.base_url
+            else:
+                base_url = integration_overrides.get("base_url", definition.base_url)
+        else:
+            base_url = integration_overrides.get("base_url", definition.base_url)
         api_key, api_key_source = _resolve_api_key(definition.integration_id, integration_overrides)
         fallback_models = list(
             integration_overrides.get("fallback_models", definition.fallback_models)
@@ -82,6 +95,12 @@ def _load_toml_config(path: Path) -> dict:
 
 
 def _resolve_api_key(integration_id: str, integration_overrides: dict) -> tuple[str | None, str]:
+    # OpenRouter: resolve from settings.openrouter.api_key
+    if integration_id == "openrouter":
+        or_key = settings.openrouter.api_key
+        if or_key:
+            return or_key, "openrouter_env"
+
     specific_env_name = f"INTEGRATION_{integration_id.replace('-', '_').upper()}_API_KEY"
     specific_env_value = os.getenv(specific_env_name)
     if specific_env_value:

@@ -217,9 +217,25 @@ class PipelineExecutor:
         remaining_ms: float,
         request_id: str,
     ) -> StageResult:
-        """Execute a single stage with retries."""
+        """Execute a single stage with retries and candidate fallback.
+
+        For stages using intelligent selection:
+        - Manages candidate exclusion state across retry iterations
+        - Separates retry (same candidate, transient failures) from fallback (next candidate, terminal failures)
+        - Only returns final failure after all viable candidates are exhausted
+
+        For stages with fixed target_model:
+        - Uses simple retry loop
+        """
         stage_timeout_ms = stage_def.timeout_override_ms or remaining_ms
         max_retries = min(stage_def.max_retries, 3)  # bounded retry
+
+        # For intelligent selection stages, manage candidate exclusion state here
+        # so it persists across retry iterations
+        excluded_ids: set[str] = set()
+        failure_penalties: dict[str, dict[str, float]] = {}
+        fallback_chain: list[dict] = []
+        is_intelligent = stage_def.uses_intelligent_selection
 
         last_error: str | None = None
         last_error_type: str | None = None
@@ -239,9 +255,16 @@ class PipelineExecutor:
                 )
 
             try:
-                result = await self._run_stage(
-                    ctx, stage_def, request, stage_timeout_ms, trace, request_id,
-                )
+                if is_intelligent:
+                    result = await self._run_stage_with_candidate_selection(
+                        ctx, stage_def, request, stage_timeout_ms, trace, request_id,
+                        excluded_ids, failure_penalties, fallback_chain,
+                    )
+                else:
+                    result = await self._run_stage(
+                        ctx, stage_def, request, stage_timeout_ms, trace, request_id,
+                    )
+
                 trace.status = "completed"
                 trace.duration_ms = result.duration_ms
                 trace.completed_at = time.monotonic()
@@ -292,6 +315,20 @@ class PipelineExecutor:
                     trace.duration_ms = (trace.completed_at - trace.started_at) * 1000
                     ctx.trace.stage_traces.append(trace)
 
+                # For intelligent selection: update excluded set from the internal fallback loop
+                # so it persists across retry iterations
+                if is_intelligent:
+                    sel_trace_data = ctx.metadata.get(f"selection_trace:{stage_def.stage_id}")
+                    if sel_trace_data and excluded_ids:
+                        logger.info(
+                            "stage_retry_iteration",
+                            request_id=request_id,
+                            stage_id=stage_def.stage_id,
+                            attempt=str(attempt + 1),
+                            excluded_count=str(len(excluded_ids)),
+                            excluded_models=str(excluded_ids),
+                        )
+
         # All retries exhausted
         # Record failure metrics
         pipeline_stage_executions_total.inc(
@@ -307,6 +344,14 @@ class PipelineExecutor:
             stage_role=stage_def.role.value,
             error_type=last_error_type or "unknown",
         )
+
+        # Record fallback chain in metadata
+        if fallback_chain:
+            ctx.metadata[f"selection_trace:{stage_def.stage_id}"] = {
+                "fallback_chain": fallback_chain,
+                "fallback_count": len(fallback_chain),
+                "excluded_candidates": list(excluded_ids),
+            }
 
         return StageResult(
             stage_id=stage_def.stage_id,
@@ -331,20 +376,13 @@ class PipelineExecutor:
     ) -> StageResult:
         """Run a single stage through the existing ChatProxyService.
 
-        If the stage has a selection_policy, uses intelligent model selection
-        with smart fallback: on failure, re-ranks candidates and picks next best.
+        Uses the fixed target_model for this stage.
         """
         stage_start = time.monotonic()
         trace.started_at = stage_start
         trace.status = "running"
 
-        # Parse selection policy if intelligent selection is active
-        policy = None
-        if stage_def.uses_intelligent_selection:
-            from app.intelligence.types import SelectionPolicy
-            policy = SelectionPolicy(**(stage_def.selection_policy or {}))
-
-        # Build stage prompt and messages (same regardless of model)
+        # Build stage prompt and messages
         stage_prompt = build_stage_prompt(
             stage_id=stage_def.stage_id,
             role=stage_def.role,
@@ -358,39 +396,59 @@ class PipelineExecutor:
             ctx, stage_def, stage_prompt, request,
         )
 
-        # Execute with intelligent selection + fallback loop
-        if stage_def.uses_intelligent_selection and policy:
-            return await self._run_stage_with_fallback(
-                ctx, stage_def, policy, request, stage_messages,
-                stage_start, trace, request_id,
-            )
-
-        # Fallback to fixed target_model
         target_model = stage_def.target_model
         return await self._execute_stage_model(
             target_model, ctx, stage_def, request, stage_messages,
             stage_start, trace, request_id,
         )
 
-    async def _run_stage_with_fallback(
+    async def _run_stage_with_candidate_selection(
         self,
         ctx: PipelineContext,
         stage_def,
-        policy,
         request: ChatCompletionRequest,
-        stage_messages: list[ChatMessage],
-        stage_start: float,
+        timeout_ms: float,
         trace: StageTrace,
         request_id: str,
+        excluded_ids: set[str],
+        failure_penalties: dict[str, dict[str, float]],
+        fallback_chain: list[dict],
     ) -> StageResult:
-        """Execute a stage with intelligent model selection and smart fallback.
+        """Execute a stage with intelligent candidate selection and smart fallback.
 
-        On failure, classifies the failure reason, applies adaptive score
-        penalties, and re-ranks candidates before trying the next best.
+        This method manages its own candidate fallback loop:
+        1. Select best non-excluded candidate
+        2. Execute with that candidate
+        3. On terminal failure: exclude candidate, re-rank, try next
+        4. On retryable failure: retry same candidate (if caller retry budget allows)
+
+        The caller (_execute_stage) tracks excluded candidates across retry iterations.
+
+        Args:
+            ctx: Pipeline context.
+            stage_def: Stage definition.
+            request: Original request.
+            timeout_ms: Timeout for this stage.
+            trace: Stage trace for tracking.
+            request_id: Request identifier.
+            excluded_ids: Set of already-excluded candidate model IDs (mutated).
+            failure_penalties: Failure penalties for re-ranking (mutated).
+            fallback_chain: Record of fallback attempts (mutated).
+
+        Returns:
+            StageResult on success, raises exception on failure.
         """
         from app.intelligence.selection import model_selector
+        from app.intelligence.types import SelectionPolicy
 
-        # Get previous stage model
+        stage_start = time.monotonic()
+        trace.started_at = stage_start
+        trace.status = "running"
+
+        # Parse selection policy
+        policy = SelectionPolicy(**(stage_def.selection_policy or {}))
+
+        # Get previous stage model for avoidance
         prev_output = ctx.get_previous_output(stage_def.stage_id)
         prev_model = ""
         if prev_output is not None:
@@ -405,22 +463,17 @@ class PipelineExecutor:
             except ValueError:
                 pass
 
-        # Initial selection
-        selection = model_selector.select_for_stage(
+        # Get all candidates upfront
+        initial_selection = model_selector.select_for_stage(
             stage_id=stage_def.stage_id,
             stage_role=stage_def.role,
             policy=policy,
             previous_stage_model=prev_model,
+            excluded_ids=excluded_ids if excluded_ids else None,
         )
+        candidates = list(initial_selection.all_candidates)
 
-        ctx.metadata[f"selection_trace:{stage_def.stage_id}"] = selection.to_dict()
-
-        # Build mutable candidate list for fallback
-        candidates = list(selection.all_candidates)
-        excluded_ids: set[str] = set()
-        failure_penalties: dict[str, dict[str, float]] = {}
-        fallback_chain: list[dict] = []
-
+        # Fallback loop: try candidates until success or exhausted
         while True:
             # Re-rank candidates with current failure penalties
             if failure_penalties:
@@ -433,7 +486,6 @@ class PipelineExecutor:
                     prev_model,
                     failure_penalties=failure_penalties,
                 )
-                # Update candidates with re-ranked results
                 for c in candidates:
                     for r in re_ranked:
                         if r.model_id == c.model_id:
@@ -443,9 +495,7 @@ class PipelineExecutor:
                             c.excluded_reason = r.excluded_reason
                             break
 
-                # Re-sort by updated scores
                 candidates.sort(key=lambda c: (c.is_excluded, c.final_score), reverse=True)
-                # Re-assign ranks
                 rank = 1
                 for c in candidates:
                     if not c.is_excluded:
@@ -454,15 +504,21 @@ class PipelineExecutor:
                     else:
                         c.rank = -1
 
+            # Apply runtime exclusions from caller
+            for c in candidates:
+                if c.model_id in excluded_ids:
+                    c.is_excluded = True
+                    if not c.excluded_reason:
+                        c.excluded_reason = "runtime_excluded"
+
             # Pick the best non-excluded candidate
             target_candidate = None
             for c in candidates:
-                if c.model_id not in excluded_ids and not c.is_excluded:
+                if not c.is_excluded:
                     target_candidate = c
                     break
 
             if target_candidate is None:
-                # No more candidates available
                 logger.warning(
                     "stage_no_candidates_left",
                     request_id=request_id,
@@ -490,58 +546,103 @@ class PipelineExecutor:
                     details={"stage_id": stage_def.stage_id, "attempts": fallback_count},
                 )
 
-            # Execute with this candidate
-            result = await self._execute_stage_model(
-                target_candidate.model_id, ctx, stage_def, request, stage_messages,
-                stage_start, trace, request_id,
+            # Record selection trace in context metadata (not in StageTrace which doesn't have these fields)
+            ctx.metadata[f"selection_trace:{stage_def.stage_id}"] = {
+                "selected_model": target_candidate.model_id,
+                "selected_provider": target_candidate.provider_id,
+                "selected_candidate": target_candidate.to_dict(),
+                "all_candidates": [c.to_dict() for c in candidates],
+            }
+
+            logger.info(
+                "stage_candidate_selected",
+                request_id=request_id,
+                stage_id=stage_def.stage_id,
+                model=target_candidate.model_id,
+                provider=target_candidate.provider_id,
+                score=str(round(target_candidate.final_score, 3)),
+                excluded_count=str(len(excluded_ids)),
             )
 
-            if result.success:
-                # Record fallback chain in selection trace
+            # Build stage prompt and messages
+            stage_prompt = build_stage_prompt(
+                stage_id=stage_def.stage_id,
+                role=stage_def.role,
+                original_request=ctx.original_user_input,
+                input_mapping=stage_def.input_mapping,
+                prompt_template=stage_def.prompt_template,
+                context=ctx,
+            )
+
+            stage_messages = self._build_stage_messages(
+                ctx, stage_def, stage_prompt, request,
+            )
+
+            # Execute with the selected candidate
+            try:
+                result = await self._execute_stage_model(
+                    target_candidate.model_id, ctx, stage_def, request, stage_messages,
+                    stage_start, trace, request_id,
+                )
+
+                # Success
                 if fallback_chain:
                     ctx.metadata[f"selection_trace:{stage_def.stage_id}"]["fallback_chain"] = fallback_chain
                     ctx.metadata[f"selection_trace:{stage_def.stage_id}"]["fallback_count"] = len(fallback_chain)
 
                 return result
 
-            # Candidate failed — classify failure and apply adaptive penalty
-            excluded_ids.add(target_candidate.model_id)
-            failure_reason = self._classify_stage_failure(result)
-            penalty = self._compute_failure_penalty(failure_reason)
+            except Exception as exc:
+                # Candidate failed — classify and decide: retry vs exclude
+                failure_reason = self._classify_exception(exc)
+                is_terminal = self._is_terminal_failure(exc)
 
-            # Apply penalty to this candidate
-            failure_penalties[target_candidate.model_id] = penalty
+                if is_terminal:
+                    # Exclude this candidate — won't be tried again
+                    excluded_ids.add(target_candidate.model_id)
+                    failure_penalties[target_candidate.model_id] = self._compute_failure_penalty(failure_reason)
 
-            # Record in global short-lived penalty cache
-            try:
-                from app.pipeline.observability.penalty_cache import global_penalty_cache
-                global_penalty_cache.record_failure(
-                    target_candidate.model_id,
-                    reason=failure_reason,
-                    penalty=sum(penalty.values()),
-                )
-            except Exception:
-                pass  # Penalty cache is optional
+                    # Record in global penalty cache (optional)
+                    try:
+                        from app.pipeline.observability.penalty_cache import global_penalty_cache
+                        global_penalty_cache.record_failure(
+                            target_candidate.model_id,
+                            reason=failure_reason,
+                            penalty=sum(failure_penalties[target_candidate.model_id].values()),
+                        )
+                    except Exception:
+                        pass
 
-            # Record in fallback chain
-            fallback_chain.append({
-                "failed_model": target_candidate.model_id,
-                "failed_provider": target_candidate.provider_id,
-                "reason": failure_reason,
-                "penalty": penalty,
-                "error_message": result.error_message,
-            })
+                    fallback_chain.append({
+                        "failed_model": target_candidate.model_id,
+                        "failed_provider": target_candidate.provider_id,
+                        "reason": failure_reason,
+                        "penalty": failure_penalties[target_candidate.model_id],
+                        "error_message": str(exc),
+                    })
 
-            logger.warning(
-                "stage_candidate_failed_trying_next",
-                request_id=request_id,
-                stage_id=stage_def.stage_id,
-                failed_model=target_candidate.model_id,
-                failed_provider=target_candidate.provider_id,
-                failure_reason=failure_reason,
-                penalty=str(penalty),
-                excluded_count=str(len(excluded_ids)),
-            )
+                    logger.warning(
+                        "stage_candidate_failed_trying_next",
+                        request_id=request_id,
+                        stage_id=stage_def.stage_id,
+                        failed_model=target_candidate.model_id,
+                        failed_provider=target_candidate.provider_id,
+                        failure_reason=failure_reason,
+                        excluded_count=str(len(excluded_ids)),
+                    )
+
+                    # Continue loop to try next candidate
+                    continue
+                else:
+                    # Retryable failure — re-raise for caller to handle retry
+                    logger.info(
+                        "stage_retryable_failure",
+                        request_id=request_id,
+                        stage_id=stage_def.stage_id,
+                        model=target_candidate.model_id,
+                        reason=failure_reason,
+                    )
+                    raise
 
     def _classify_stage_failure(self, result: StageResult) -> str:
         """Classify the reason for a stage failure.
@@ -586,6 +687,75 @@ class PipelineExecutor:
             "execution_error": {"reliability_penalty": 0.10},
         }
         return penalty_map.get(failure_reason, {"reliability_penalty": 0.10})
+
+    def _is_terminal_failure(self, exc: Exception) -> bool:
+        """Determine if an exception means the candidate should be excluded.
+
+        Terminal failures mean this candidate cannot succeed and should not be retried:
+        - No available providers / service unavailable
+        - available=false / excluded by availability filter
+        - Missing auth / browser unavailable
+        - Circuit breaker open
+        - Model not found / misconfigured
+
+        Retryable failures may succeed on retry:
+        - Transient timeout
+        - 429 / rate limit (if policy allows)
+        - Temporary provider error
+        """
+        error_type = type(exc).__name__.lower()
+        error_msg = str(exc).lower()
+
+        # Terminal: service/model unavailability
+        terminal_indicators = [
+            "no available",
+            "no viable",
+            "service_unavailable",
+            "unavailable",
+            "available=false",
+            "exceeded max fallback",
+            "circuit_breaker_open",
+            "not found",
+            "unknown model",
+            "missing auth",
+            "browser unavailable",
+            "no candidates",
+        ]
+
+        for indicator in terminal_indicators:
+            if indicator in error_msg or indicator in error_type:
+                return True
+
+        # Check for ServiceUnavailableError specifically
+        if isinstance(exc, ServiceUnavailableError):
+            return True
+
+        # Timeout is potentially retryable (not terminal by default)
+        return not (
+            "timeout" in error_msg or "gateway_timeout" in error_type
+            or "timed out" in error_msg
+        )
+
+    def _classify_exception(self, exc: Exception) -> str:
+        """Classify an exception into a reason code for logging/analytics."""
+        error_type = type(exc).__name__.lower()
+        error_msg = str(exc).lower()
+
+        if "timeout" in error_msg or "timeout" in error_type or "gateway_timeout" in error_type:
+            return "timeout"
+        if "circuit" in error_msg or "circuit" in error_type:
+            return "circuit_breaker"
+        if "no available" in error_msg or "no viable" in error_msg or "unavailable" in error_msg or "service_unavailable" in error_type:
+            return "service_unavailable"
+        if "not found" in error_msg or "unknown model" in error_msg:
+            return "model_not_found"
+        if "auth" in error_msg or "login" in error_msg or "credential" in error_msg:
+            return "auth_unavailable"
+        if "rate" in error_msg or "429" in error_msg:
+            return "rate_limited"
+        if "internal" in error_type or "internal_error" in error_msg:
+            return "provider_internal_error"
+        return "execution_error"
 
     async def _execute_stage_model(
         self,

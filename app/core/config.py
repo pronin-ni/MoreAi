@@ -121,6 +121,28 @@ class OpenCodeSettings(BaseSettings):
     required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
 
 
+class ModelDiscoverySettings(BaseSettings):
+    """Automatic model discovery and periodic refresh configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="MODEL_", extra="ignore")
+
+    discovery_on_startup: bool = Field(
+        default=True,
+        description="Discover models from all providers at startup",
+    )
+    refresh_interval_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=3600,
+        description="Interval between automatic model refresh cycles",
+    )
+    refresh_jitter_seconds: int = Field(
+        default=30,
+        ge=0,
+        description="Random jitter added to refresh interval to avoid thundering herd",
+    )
+
+
 class PipelineSettings(BaseSettings):
     """Pipeline orchestration configuration."""
 
@@ -130,6 +152,19 @@ class PipelineSettings(BaseSettings):
     max_stages: int = Field(default=3, ge=1, le=5, description="Max stages per pipeline")
     max_total_time_ms: int = Field(default=180_000, ge=10_000, description="Max total pipeline execution time")
     max_stage_retries: int = Field(default=1, ge=0, le=3, description="Default max retries per stage")
+
+
+class OpenRouterSettings(BaseSettings):
+    """OpenRouter API provider configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="OPENROUTER_", extra="ignore")
+
+    enabled: bool = Field(default=True, description="Enable OpenRouter provider")
+    api_key: str | None = Field(default=None, description="OpenRouter API key")
+    base_url: str = Field(default="https://openrouter.ai/api/v1", description="OpenRouter API base URL")
+    only_free: bool = Field(default=False, description="Only include free models")
+    include_free_router: bool = Field(default=False, description="Include the special openrouter/free router model")
+    discovery_on_startup: bool = Field(default=True, description="Discover models from OpenRouter API at startup")
 
 
 class Settings(BaseSettings):
@@ -185,6 +220,8 @@ class Settings(BaseSettings):
     google_auth: GoogleAuthSettings = Field(default_factory=GoogleAuthSettings)
     recon: ReconSettings = Field(default_factory=ReconSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
+    openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
+    model_discovery: ModelDiscoverySettings = Field(default_factory=ModelDiscoverySettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -210,6 +247,10 @@ class Settings(BaseSettings):
             object.__setattr__(self, "recon", ReconSettings())
         if "pipeline" not in kwargs:
             object.__setattr__(self, "pipeline", PipelineSettings())
+        if "openrouter" not in kwargs:
+            object.__setattr__(self, "openrouter", OpenRouterSettings())
+        if "model_discovery" not in kwargs:
+            object.__setattr__(self, "model_discovery", ModelDiscoverySettings())
 
 
 settings = Settings()

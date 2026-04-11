@@ -140,6 +140,12 @@ class ScoringBreakdown:
         self.failure_penalty: float = 0.0
         self.penalty_reasons: list[str] = []
 
+        # Staleness decay
+        self.staleness_decay: float = 1.0  # Decay factor (1.0 = no decay, 0.3 = floor)
+        self.last_activity_seconds_ago: float = 0.0
+        self.staleness_label: str = "fresh"
+        self.effective_confidence: float = 0.0  # Confidence after staleness reduction
+
         # Final score
         self.final_score: float = 0.0
 
@@ -187,6 +193,12 @@ class ScoringBreakdown:
             },
             "failure_penalty": round(self.failure_penalty, 3),
             "penalty_reasons": self.penalty_reasons,
+            "staleness": {
+                "decay_factor": round(self.staleness_decay, 4),
+                "last_activity_seconds_ago": round(self.last_activity_seconds_ago, 1),
+                "staleness_label": self.staleness_label,
+                "effective_confidence": round(self.effective_confidence, 3),
+            },
             "final_score": round(self.final_score, 3),
         }
 
@@ -266,6 +278,20 @@ class SuitabilityScorer:
         breakdown.stability_score = stats.stability_score
         breakdown.tag_bonus_score = self._compute_tag_bonus(tags, role_str)
 
+        # Apply staleness decay to component scores
+        last_activity = _get_last_activity(model_id, provider_id)
+        from app.intelligence.staleness import StalenessDecay
+        staleness = StalenessDecay(last_activity)
+
+        # Decay stability and availability toward neutral (latency and tags don't decay)
+        breakdown.stability_score = staleness.apply(breakdown.stability_score)
+        breakdown.availability_score = staleness.apply(breakdown.availability_score)
+
+        # Record staleness info
+        breakdown.staleness_decay = staleness.decay_factor_value
+        breakdown.last_activity_seconds_ago = staleness.staleness_seconds
+        breakdown.staleness_label = staleness.staleness_label
+
         # Compute base static score
         weights = WEIGHTS.get(role_str, WEIGHTS["generate"])
         breakdown.base_static_score = (
@@ -289,6 +315,9 @@ class SuitabilityScorer:
         # Then scale adjustment to ±MAX_PERFORMANCE_ADJUSTMENT range
         blended_score = breakdown.base_static_score * (1 - confidence) + raw_perf_score * confidence
         breakdown.dynamic_adjustment = (blended_score - breakdown.base_static_score) * 0.5
+
+        # Effective confidence after staleness reduction
+        breakdown.effective_confidence = confidence * breakdown.staleness_decay
 
         # Apply failure penalties
         if failure_penalties:
@@ -496,3 +525,37 @@ class SuitabilityScorer:
 
 # Global singleton
 suitability_scorer = SuitabilityScorer()
+
+
+def _get_last_activity(model_id: str, provider_id: str) -> float:
+    """Get the most recent activity timestamp for a model+provider.
+
+    Sources (in priority order):
+    1. ModelLifecycleEntry.last_seen_at from intelligence tracker
+    2. ModelRuntimeStats.last_success_at / last_failure_at (if populated)
+    3. Default: 0.0 (triggers immediate staleness)
+
+    Returns:
+        Timestamp of last known activity, or 0.0 if unknown.
+    """
+    # Source 1: Intelligence tracker lifecycle
+    try:
+        from app.intelligence.tracker import model_intelligence_tracker
+        entry = model_intelligence_tracker.get_entry(model_id)
+        if entry and entry.last_seen_at > 0:
+            return entry.last_seen_at
+    except Exception:
+        pass  # Tracker may not be initialized
+
+    # Source 2: Runtime stats (may not be populated)
+    try:
+        from app.intelligence.stats import stats_aggregator
+        stats = stats_aggregator.get_model_stats(model_id, provider_id, "api")
+        if stats.last_success_at > 0:
+            return stats.last_success_at
+        if stats.last_failure_at > 0:
+            return stats.last_failure_at
+    except Exception:
+        pass
+
+    return 0.0

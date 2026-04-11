@@ -54,6 +54,7 @@ class ModelSelector:
         stage_role: StageRole | str,
         policy: SelectionPolicy,
         previous_stage_model: str = "",
+        excluded_ids: set[str] | None = None,
     ) -> SelectionTrace:
         """Select the best model for a pipeline stage.
 
@@ -62,11 +63,13 @@ class ModelSelector:
             stage_role: The stage role (generate, review, etc.).
             policy: Selection policy constraints.
             previous_stage_model: Model used in the previous stage (for avoidance).
+            excluded_ids: Set of model IDs to exclude (from previous failures).
 
         Returns:
             SelectionTrace with full decision traceability.
         """
         role_str = stage_role.value if isinstance(stage_role, StageRole) else stage_role
+        excluded_ids = excluded_ids or set()
 
         trace = SelectionTrace(
             stage_id=stage_id,
@@ -83,6 +86,13 @@ class ModelSelector:
 
         trace.all_candidates = ranked
 
+        # Apply runtime exclusions (on top of policy-based exclusions from _rank_candidates)
+        for c in ranked:
+            if c.model_id in excluded_ids:
+                c.is_excluded = True
+                if not c.excluded_reason:
+                    c.excluded_reason = "runtime_excluded"
+
         # Filter out excluded
         viable = [c for c in ranked if not c.is_excluded]
 
@@ -92,6 +102,7 @@ class ModelSelector:
                 stage_id=stage_id,
                 role=role_str,
                 total_candidates=str(len(ranked)),
+                excluded_ids=str(excluded_ids),
             )
             raise ServiceUnavailableError(
                 f"No viable candidates for stage '{stage_id}' (role: {role_str})",
@@ -99,6 +110,7 @@ class ModelSelector:
                     "stage_id": stage_id,
                     "role": role_str,
                     "excluded_count": str(len(ranked) - len(viable)),
+                    "excluded_ids": list(excluded_ids),
                 },
             )
 
@@ -110,6 +122,7 @@ class ModelSelector:
         trace.selected_model = best.model_id
         trace.selected_provider = best.provider_id
         trace.selected_transport = best.transport
+        trace.selected_candidate = best  # Store full ranking object
 
         logger.info(
             "model_selected",

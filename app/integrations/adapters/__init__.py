@@ -459,3 +459,15 @@ class OllamaFreeAPIIntegration(BaseIntegrationAdapter):
             model=upstream_model,
             **filtered_kwargs,
         )
+
+
+# OpenRouter adapter — imported after all base classes are defined
+from app.integrations.adapters.openrouter import OpenRouterIntegration  # noqa: E402
+
+__all__ = [
+    "BaseIntegrationAdapter",
+    "ClientBasedIntegration",
+    "OllamaFreeAPIIntegration",
+    "OpenAICompatibleIntegration",
+    "OpenRouterIntegration",
+]

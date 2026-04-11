@@ -78,6 +78,12 @@ async def lifespan(app: FastAPI):
     snapshot_scheduler.start()
     logger.info("Scoring snapshot scheduler started")
 
+    # Start model discovery service (periodic refresh background task)
+    from app.services.model_discovery import model_discovery_service
+    await model_discovery_service.discover_all()
+    model_discovery_service.start()
+    logger.info("Model discovery service started")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
@@ -100,6 +106,11 @@ async def lifespan(app: FastAPI):
     from app.pipeline.observability.scoring_trends import snapshot_scheduler
     snapshot_scheduler.stop()
     logger.info("Scoring snapshot scheduler stopped")
+
+    # Stop model discovery service
+    from app.services.model_discovery import model_discovery_service
+    await model_discovery_service.stop()
+    logger.info("Model discovery service stopped")
 
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")

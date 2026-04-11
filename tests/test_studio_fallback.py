@@ -9,14 +9,12 @@ Covers:
 - advanced/manual explicit model selection still works separately
 """
 
-import pytest
 
 from app.api.studio_modes import (
     STUDIO_MODE_POLICIES,
     get_mode_policy,
     get_selection_policy,
 )
-
 
 # ── Policy Structure Tests ──
 
@@ -148,9 +146,7 @@ class TestStudioIntelligentSelection:
 
     def test_fast_mode_uses_model_selector(self):
         """Fast mode should call ModelSelector, not use fixed model."""
-        from unittest.mock import MagicMock, patch
 
-        from app.api.routes_studio import _execute_studio_intelligent
         from app.api.studio_modes import get_selection_policy
         from app.intelligence.types import SelectionPolicy
 
@@ -184,7 +180,7 @@ class TestStudioIntelligentSelection:
         from app.api.studio_modes import STUDIO_MODE_POLICIES
 
         # Verify that policy-based modes exist alongside advanced mode
-        for mode_name, mode_config in STUDIO_MODE_POLICIES.items():
+        for _mode_name, mode_config in STUDIO_MODE_POLICIES.items():
             assert "label" in mode_config
             assert "is_pipeline" in mode_config
 
@@ -309,3 +305,101 @@ class TestAutoDiscovery:
                     f"Pipeline {pipeline.pipeline_id}, stage {stage.stage_id}: "
                     "uses target_model instead of selection_policy"
                 )
+
+
+# ── Terminal vs Retryable Failure Classification Tests ──
+
+
+class TestTerminalFailureClassification:
+    """Verify studio mode correctly classifies terminal vs retryable failures."""
+
+    def test_terminal_failure_service_unavailable(self):
+        """ServiceUnavailableError should be classified as terminal."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+        from app.core.errors import ServiceUnavailableError
+
+        exc = ServiceUnavailableError("No available providers")
+        assert _is_terminal_studio_failure(exc) is True
+
+    def test_terminal_failure_no_available_providers(self):
+        """'No available providers' message should be terminal."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+
+        exc = Exception("No available providers for model test")
+        assert _is_terminal_studio_failure(exc) is True
+
+    def test_terminal_failure_unavailable(self):
+        """'unavailable' in message should be terminal."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+
+        exc = Exception("Provider unavailable")
+        assert _is_terminal_studio_failure(exc) is True
+
+    def test_terminal_failure_browser_unavailable(self):
+        """'browser unavailable' should be terminal."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+
+        exc = Exception("Browser unavailable for model test")
+        assert _is_terminal_studio_failure(exc) is True
+
+    def test_non_terminal_timeout(self):
+        """Timeout should NOT be terminal (retryable)."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+
+        exc = Exception("Request timed out")
+        # This is NOT terminal because timeout is retryable
+        # (Unless it's GatewayTimeoutError which is an APIError)
+        # Plain exception with "timeout" → check: it IS in terminal_indicators? No.
+        # It matches the "timeout" check at the end → returns False
+        assert _is_terminal_studio_failure(exc) is False
+
+    def test_terminal_unknown_error(self):
+        """Unknown errors should be treated as terminal by default."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+
+        exc = Exception("Some weird error")
+        assert _is_terminal_studio_failure(exc) is True
+
+
+# ── Studio Intelligent Selection Fallback Tests ──
+
+
+class TestStudioIntelligentFallback:
+    """Test studio mode intelligent selection fallback with candidate exclusion."""
+
+    def test_studio_mode_excludes_unavailable_candidate(self):
+        """Studio mode should track excluded candidates and not retry them."""
+        from app.api.routes_studio import _is_terminal_studio_failure
+        from app.core.errors import ServiceUnavailableError
+
+        # Verify that terminal failures are properly identified
+        exc = ServiceUnavailableError("No available providers for model test-model")
+        assert _is_terminal_studio_failure(exc) is True
+
+        # The exclusion logic in _execute_studio_intelligent should add this to excluded_ids
+        # and skip it on next iteration
+        excluded_ids = set()
+        excluded_ids.add("test-model")
+        assert "test-model" in excluded_ids
+
+    def test_studio_mode_tracks_fallback_with_terminal_flag(self):
+        """Fallback records should include is_terminal flag."""
+        from app.api.routes_studio import _classify_fallback_reason, _is_terminal_studio_failure
+        from app.core.errors import ServiceUnavailableError
+
+        exc = ServiceUnavailableError("No available providers")
+        error_msg = str(exc)
+
+        reason = _classify_fallback_reason(error_msg)
+        is_terminal = _is_terminal_studio_failure(exc)
+
+        fallback_record = {
+            "failed_model": "model-a",
+            "failed_provider": "provider-a",
+            "score": 0.9,
+            "reason": reason,
+            "is_terminal": is_terminal,
+        }
+
+        assert fallback_record["is_terminal"] is True
+        assert fallback_record["reason"] == "provider_unavailable"

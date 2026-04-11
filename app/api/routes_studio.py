@@ -226,10 +226,15 @@ async def _execute_studio_intelligent(
     last_error = None
     used_model = ""
     used_provider = ""
+    excluded_ids: set[str] = set()
 
     for attempt_idx, candidate in enumerate(viable):
         if attempt_idx > max_attempts:
             break
+
+        # Skip already-excluded candidates
+        if candidate.model_id in excluded_ids:
+            continue
 
         chat_request = ChatCompletionRequest(
             model=candidate.model_id,
@@ -247,20 +252,40 @@ async def _execute_studio_intelligent(
         except Exception as exc:
             last_error = exc
             error_msg = str(exc)
-            logger.warning(
-                "studio_intelligent_candidate_failed",
-                request_id=request_id,
-                candidate=candidate.model_id,
-                provider=candidate.provider_id,
-                score=round(candidate.final_score, 3),
-                error=error_msg[:200],
-            )
+            failure_reason = _classify_fallback_reason(error_msg)
+
+            # Determine if this is a terminal failure (candidate should be excluded)
+            is_terminal = _is_terminal_studio_failure(exc)
+
+            if is_terminal:
+                excluded_ids.add(candidate.model_id)
+                logger.warning(
+                    "studio_intelligent_candidate_excluded",
+                    request_id=request_id,
+                    candidate=candidate.model_id,
+                    provider=candidate.provider_id,
+                    score=round(candidate.final_score, 3),
+                    reason=failure_reason,
+                    error=error_msg[:200],
+                    total_excluded=str(len(excluded_ids)),
+                )
+            else:
+                logger.warning(
+                    "studio_intelligent_candidate_failed",
+                    request_id=request_id,
+                    candidate=candidate.model_id,
+                    provider=candidate.provider_id,
+                    score=round(candidate.final_score, 3),
+                    reason=failure_reason,
+                    error=error_msg[:200],
+                )
 
             fallback_records.append({
                 "failed_model": candidate.model_id,
                 "failed_provider": candidate.provider_id,
                 "score": round(candidate.final_score, 3),
-                "reason": _classify_fallback_reason(error_msg),
+                "reason": failure_reason,
+                "is_terminal": is_terminal,
             })
 
             if attempt_idx + 1 <= max_attempts:
@@ -560,6 +585,56 @@ def _classify_fallback_reason(error_msg: str) -> str:
     if "degrad" in msg_lower:
         return "degraded"
     return "execution_error"
+
+
+def _is_terminal_studio_failure(exc: Exception) -> bool:
+    """Determine if a studio candidate failure is terminal (should exclude candidate).
+
+    Terminal failures mean this candidate cannot succeed:
+    - ServiceUnavailableError / no available providers
+    - available=false / excluded by availability filter
+    - Missing auth / browser unavailable
+    - Circuit breaker open
+    - Model not found / misconfigured
+
+    Retryable failures may succeed on retry:
+    - Transient timeout
+    - 429 / rate limit
+    """
+    from app.core.errors import ServiceUnavailableError
+
+    error_type = type(exc).__name__.lower()
+    error_msg = str(exc).lower()
+
+    # Terminal: service/model unavailability
+    terminal_indicators = [
+        "no available",
+        "no viable",
+        "service_unavailable",
+        "unavailable",
+        "available=false",
+        "circuit_breaker_open",
+        "not found",
+        "unknown model",
+        "missing auth",
+        "browser unavailable",
+        "no candidates",
+    ]
+
+    for indicator in terminal_indicators:
+        if indicator in error_msg or indicator in error_type:
+            return True
+
+    # ServiceUnavailableError is always terminal
+    if isinstance(exc, ServiceUnavailableError):
+        return True
+
+    # Timeout and rate limits are potentially retryable
+    return not (
+        "timeout" in error_msg or "gateway_timeout" in error_type
+        or "timed out" in error_msg
+        or "rate" in error_msg or "429" in error_msg
+    )
 
 
 def _render_studio_response(

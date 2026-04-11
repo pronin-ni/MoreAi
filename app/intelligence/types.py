@@ -331,6 +331,7 @@ class SelectionTrace:
     selected_model: str = ""
     selected_provider: str = ""
     selected_transport: str = ""
+    selected_candidate: CandidateRanking | None = None  # Full ranking object for the selected candidate
 
     # Selection context
     previous_stage_model: str = ""
@@ -341,7 +342,7 @@ class SelectionTrace:
     fallback_chain: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "stage_id": self.stage_id,
             "stage_role": self.stage_role,
             "selection_time": self.selection_time,
@@ -353,6 +354,9 @@ class SelectionTrace:
             "fallback_count": self.fallback_count,
             "fallback_chain": self.fallback_chain,
         }
+        if self.selected_candidate:
+            result["selected_candidate"] = self.selected_candidate.to_dict()
+        return result
 
 
 # ── Capability Tag Entry ──

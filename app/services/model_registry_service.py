@@ -13,6 +13,11 @@ class ModelViewModel:
     enabled: bool
     available: bool
     aliases: list[str]
+    metadata: dict = None
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
 
     @property
     def is_selectable(self) -> bool:
@@ -24,6 +29,9 @@ class ModelViewModel:
             return "unavailable"
         if not self.enabled:
             return "disabled"
+        # Free models get a special badge
+        if self.metadata.get("free"):
+            return "free"
         return self.transport
 
 
@@ -34,7 +42,7 @@ class ModelRegistryService:
         raw_models = unified_registry.list_models()
         overrides = config_manager.overrides.models
         result = []
-        
+
         for m in raw_models:
             model_id = m["id"]
 
@@ -42,7 +50,7 @@ class ModelRegistryService:
             override = overrides.get(model_id)
             enabled = m.get("enabled", True)
             visibility = "public"
-            
+
             if override:
                 if override.enabled is not None:
                     enabled = override.enabled
@@ -77,6 +85,10 @@ class ModelRegistryService:
                 continue
 
             aliases = m.get("aliases", [])
+            model_metadata = {
+                "free": m.get("free", False),
+                "only_free_mode": m.get("only_free_mode", False),
+            }
 
             result.append(
                 ModelViewModel(
@@ -88,6 +100,7 @@ class ModelRegistryService:
                     enabled=enabled,
                     available=m.get("available", True),
                     aliases=aliases,
+                    metadata=model_metadata,
                 )
             )
 

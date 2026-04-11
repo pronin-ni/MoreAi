@@ -1655,3 +1655,59 @@ def _get_provider_health_summary(provider_id: str) -> dict:
         }
     except Exception:
         return {}
+
+
+# ── Model Discovery ──
+
+
+@router.get("/models/discovery/status")
+async def models_discovery_status():
+    """Get per-provider model discovery status.
+
+    Shows: provider, status (ok/failed), model count, last success, last error.
+    """
+    from app.services.model_discovery import model_discovery_service
+    return model_discovery_service.get_status()
+
+
+@router.post("/models/refresh")
+async def models_refresh_all():
+    """Trigger a full model refresh for all API providers.
+
+    Non-blocking: returns immediately while refresh runs in background.
+    Uses existing registry atomic swap — last-known-good preserved on failure.
+    """
+    from app.services.model_discovery import model_discovery_service
+    result = await model_discovery_service.refresh_all()
+    return result
+
+
+@router.post("/models/refresh/{provider_id}")
+async def models_refresh_single(provider_id: str):
+    """Trigger model refresh for a single provider.
+
+    Non-blocking: refreshes only the specified provider.
+    On failure, previous models for that provider remain (last-known-good).
+    """
+    from app.services.model_discovery import model_discovery_service
+    result = await model_discovery_service.refresh_provider(provider_id)
+    return result
+
+
+# ── Model Intelligence Status ──
+
+
+@router.get("/models/intelligence/status")
+async def models_intelligence_status():
+    """Get intelligence layer status for all tracked models.
+
+    Shows per-model:
+    - cold_start vs established
+    - sample_count, success_rate
+    - availability_score, stability_score
+    - capability tags
+    - discovery timestamp
+    - disappearance count (if model temporarily vanished and returned)
+    """
+    from app.intelligence.tracker import model_intelligence_tracker
+    return model_intelligence_tracker.get_status_summary()
