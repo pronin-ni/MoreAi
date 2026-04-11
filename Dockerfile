@@ -5,6 +5,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
+    curl \
+    jq \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -23,6 +25,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
     libcairo2 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install OpenCode CLI for agent model support
+RUN ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64") \
+    && case "$ARCH" in \
+        amd64) OC_ARCH="x64" ;; \
+        arm64) OC_ARCH="arm64" ;; \
+        *) OC_ARCH="x64" ;; \
+    esac \
+    && echo "Installing opencode for $OC_ARCH..." \
+    && curl -fsSL "https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-${OC_ARCH}.tar.gz" -o /tmp/opencode.tar.gz \
+    && tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode \
+    && rm /tmp/opencode.tar.gz \
+    && opencode version || true
 
 COPY pyproject.toml .
 COPY app/ ./app/
