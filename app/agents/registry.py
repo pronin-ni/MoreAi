@@ -58,6 +58,9 @@ class AgentRegistry:
             # Initialize pending providers (they will self-register models)
             for provider in self._pending_providers:
                 await provider.initialize()
+                # Register the provider and its discovered models into the registry
+                provider_models = getattr(provider, "_models", [])
+                self.register(provider, provider_models)
             self._initialized = True
 
     def list_models(self) -> list[dict]:
