@@ -434,7 +434,7 @@ class SuitabilityScorer:
         matching = sum(1 for t in relevant_tags if t.lower() in tags_lower)
 
         if matching == 0:
-            return 0.3  # No relevant tags = slight penalty
+            return 0.5  # Neutral — unknown models should compete fairly
         if matching >= len(relevant_tags):
             return 1.0  # All relevant tags = full bonus
         return matching / len(relevant_tags)

@@ -122,9 +122,19 @@ class ModelRuntimeStats:
         """Stability: low variance in outcomes + low fallback rate.
 
         1.0 = very stable, 0.0 = unreliable.
+
+        For models with insufficient data, transport-aware defaults:
+        - API: 0.7 (HTTP endpoints are inherently stable)
+        - Agent: 0.6 (subprocess-based, reasonably stable)
+        - Browser: 0.5 (fragile — UI changes, auth issues, crashes)
         """
         if self.request_count < 3:
-            return 0.5  # Insufficient data
+            # Transport-aware defaults for cold-start models
+            if self.transport == "api":
+                return 0.7
+            if self.transport == "agent":
+                return 0.6
+            return 0.5  # browser
         return max(0.0, 1.0 - self.failure_rate * 0.6 - self.fallback_rate * 0.4)
 
 

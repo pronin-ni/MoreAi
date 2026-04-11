@@ -204,7 +204,6 @@
             return `
                 <tr>
                     <td class="provider-name">${id}</td>
-                    <td class="provider-transport">${data.override_applied_at ? '—' : '—'}</td>
                     <td>
                         <span class="status-dot ${effectiveEnabled ? 'status-on' : 'status-off'}"></span>
                         ${effectiveEnabled ? 'Enabled' : 'Disabled'}
@@ -226,7 +225,7 @@
             `;
         }).join('');
 
-        tbody.innerHTML = rows || '<tr><td colspan="6" class="loading-cell">No providers found</td></tr>';
+        tbody.innerHTML = rows || '<tr><td colspan="5" class="loading-cell">No providers found</td></tr>';
     }
 
     window.__admin = window.__admin || {};

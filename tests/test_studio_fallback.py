@@ -249,8 +249,8 @@ class TestAutoDiscovery:
         # New model with {STABLE} only gets partial
         tags = {"stable"}
         bonus = suitability_scorer._compute_tag_bonus(tags, "generate")
-        # STABLE is not in generate's relevant tags → 0.3 (no match penalty)
-        assert bonus == 0.3
+        # STABLE is not in generate's relevant tags → 0.5 (neutral, not penalty)
+        assert bonus == 0.5
 
         # But for balanced mode (unknown role), it returns neutral 0.5
         bonus_balanced = suitability_scorer._compute_tag_bonus(tags, "balanced")
