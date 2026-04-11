@@ -1,19 +1,23 @@
 import asyncio
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.browser.base import BrowserProvider
-from app.core.config import settings
-from app.core.logging import get_logger
+from app.browser.capabilities import ProviderCapabilities
+from app.browser.debug_artifacts import save_debug_artifacts
+from app.browser.page_helpers import first_visible
+from app.browser.response_waiter import ResponseWaitConfig, ResponseWaiter
+from app.browser.selectors import SelectorDef
 from app.core.errors import (
+    GenerationTimeoutError,
     MessageInputNotFoundError,
     SendButtonNotFoundError,
-    AssistantMessageNotFoundError,
-    GenerationTimeoutError,
 )
+from app.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from playwright.async_api import Locator
 
 logger = get_logger(__name__)
 
@@ -25,6 +29,28 @@ class ChatGPTProvider(BrowserProvider):
     model_name = "chatgpt"
     display_name = "ChatGPT"
     target_url = "https://chatgpt.com/"
+
+    @classmethod
+    def get_capabilities(cls) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider_id=cls.provider_id,
+            model_name=cls.model_name,
+            display_name=cls.display_name,
+            target_url=cls.target_url,
+            send_mechanism="button",
+            response_strategy="generation_flag",
+            input_selectors_hint=(
+                'role=textbox[name="Chat with ChatGPT"]',
+                'role=textbox',
+            ),
+            send_selectors_hint=(
+                'button[data-testid="send-button"]',
+                'button:has(svg.send)',
+            ),
+            default_stable_threshold=2,
+        )
+
+    # -- Navigation --
 
     async def navigate_to_chat(self) -> None:
         logger.info("Navigating to ChatGPT", url=self.target_url)
@@ -71,57 +97,56 @@ class ChatGPTProvider(BrowserProvider):
         await self._handle_overlays()
         await self._wait_for_ready()
 
+    # -- Send --
+
     async def send_message(self, text: str) -> None:
         await self._fill_message_input(text)
         await self._click_send_button()
 
     async def _fill_message_input(self, text: str) -> None:
-        selectors_to_try = [
-            lambda: self.page.get_by_role("textbox", name="Chat with ChatGPT"),
-            lambda: self.page.get_by_role("textbox"),
-            lambda: self.page.get_by_placeholder("Ask anything"),
-            lambda: self.page.locator("textarea").first,
-            lambda: self.page.locator('textarea[placeholder*="Ask"]'),
+        selectors = [
+            SelectorDef.role("textbox", name="Chat with ChatGPT", description="role=textbox[ChatGPT]"),
+            SelectorDef.role("textbox", description="role=textbox"),
+            SelectorDef.placeholder("Ask anything", description="placeholder[Ask]"),
+            SelectorDef.raw("textarea", first=True, description="textarea.first"),
+            SelectorDef.css('textarea[placeholder*="Ask"]', description="textarea[Ask]"),
         ]
 
-        input_locator = None
-        for selector_fn in selectors_to_try:
-            try:
-                locator = selector_fn()
-                if await locator.is_visible(timeout=2000):
-                    input_locator = locator
-                    logger.debug("Found input", selector_type=type(locator).__name__)
-                    break
-            except Exception:
-                continue
+        input_locator = await first_visible(
+            self.page, selectors, timeout_ms=2000,
+            telemetry_callback=self._record_selector,
+        )
+
+        if not input_locator:
+            # Self-healing fallback
+            input_locator = await self._try_healing_input(selectors)
 
         if not input_locator:
             raise MessageInputNotFoundError(
                 "Message input not found",
-                details={"tried_selectors": len(selectors_to_try)},
+                details={"tried_selectors": len(selectors)},
             )
 
         await input_locator.fill(text)
         logger.debug("Filled message input", text_length=len(text))
 
     async def _click_send_button(self) -> None:
-        selectors_to_try = [
-            lambda: self.page.locator('button[data-testid="send-button"]'),
-            lambda: self.page.locator('button:has(svg[class*="send"]'),
-            lambda: self.page.locator('button:has(svg[class*="paperAirway"]'),
-            lambda: self.page.locator("main form button").last,
-            lambda: self.page.locator("main button").last,
+        selectors = [
+            SelectorDef.css('button[data-testid="send-button"]', description="data-testid=send"),
+            SelectorDef.css('button:has(svg[class*="send"])', description="button:has(svg.send)"),
+            SelectorDef.css('button:has(svg[class*="paperAirway"])', description="button:has(paperAirway)"),
+            SelectorDef.raw("main form button", last=True, description="main form button.last"),
+            SelectorDef.raw("main button", last=True, description="main button.last"),
         ]
 
-        button_locator = None
-        for selector_fn in selectors_to_try:
-            try:
-                locator = selector_fn()
-                if await locator.is_visible(timeout=2000):
-                    button_locator = locator
-                    break
-            except Exception:
-                continue
+        button_locator = await first_visible(
+            self.page, selectors, timeout_ms=2000,
+            telemetry_callback=self._record_selector,
+        )
+
+        if not button_locator:
+            # Self-healing fallback
+            button_locator = await self._try_healing_send(selectors)
 
         if not button_locator:
             raise SendButtonNotFoundError("Send button not found")
@@ -129,74 +154,74 @@ class ChatGPTProvider(BrowserProvider):
         await button_locator.click()
         logger.info("Clicked send button")
 
+    async def _try_healing_input(self, tried_selectors: list[SelectorDef]) -> "Locator | None":
+        """Attempt self-healing to find message input."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "message_input",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found message input",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
+
+    async def _try_healing_send(self, tried_selectors: list[SelectorDef]) -> "Locator | None":
+        """Attempt self-healing to find send button."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "send_button",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found send button",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
+
+    # -- Response wait --
+
     async def wait_for_response(self, timeout: int = 120) -> str:
         logger.info("Waiting for response generation", timeout=timeout)
 
+        waiter = ResponseWaiter(
+            provider_id=self.provider_id,
+            request_id=self._request_id,
+        )
+
+        async def extract_fn() -> str:
+            return await self._extract_from_page()
+
+        async def is_generating_fn() -> bool:
+            return await self._is_still_generating()
+
         try:
-            await self._wait_for_generation_start(timeout=10)
-            response_text = await self._wait_for_generation_end(timeout=timeout)
-
-            logger.info("Received response", response_length=len(response_text))
-            return response_text
-
-        except PlaywrightTimeout:
+            return await waiter.wait(
+                config=ResponseWaitConfig(
+                    timeout=timeout,
+                    stable_threshold=2,
+                    poll_interval=1.5,
+                    min_response_length=10,
+                ),
+                extract_fn=extract_fn,
+                is_generating_fn=is_generating_fn,
+            )
+        except GenerationTimeoutError:
+            raise
+        except Exception as exc:
             raise GenerationTimeoutError(
                 f"Response timed out after {timeout}s",
-                details={"timeout": timeout},
+                details={"timeout": timeout, "error": str(exc)},
             )
-
-    async def _wait_for_generation_start(self, timeout: int = 10) -> None:
-        await asyncio.sleep(2)
-        logger.debug("Generation started - waited for initial delay")
-
-    async def _wait_for_generation_end(self, timeout: int = 120) -> str:
-        start_time = asyncio.get_event_loop().time()
-        last_response = ""
-        stable_count = 0
-        iteration = 0
-
-        logger.info("Starting response wait", timeout=timeout)
-
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            iteration += 1
-
-            try:
-                is_generating = await self._is_still_generating()
-                if is_generating:
-                    if iteration % 10 == 0:
-                        logger.debug("Still generating...", iter=iteration)
-                    await asyncio.sleep(1)
-                    continue
-
-                response = await self._extract_from_page()
-
-                if response and len(response) > 10:
-                    logger.debug("Got response", iter=iteration, length=len(response), preview=response[:50])
-
-                    if response != last_response:
-                        last_response = response
-                        stable_count = 0
-                    elif response == last_response:
-                        stable_count += 1
-                        if stable_count >= 2:
-                            logger.info("Got stable response", length=len(response))
-                            return response
-
-                await asyncio.sleep(1.5)
-
-            except Exception as e:
-                logger.debug("Loop error", error=str(e))
-                await asyncio.sleep(1)
-
-        logger.warning("Timeout, trying final extraction")
-
-        final_attempt = await self._extract_from_page()
-        if final_attempt and len(final_attempt) > 10:
-            return final_attempt
-
-        raise AssistantMessageNotFoundError(
-            f"No response found after {timeout}s, iterations={iteration}"
-        )
 
     async def _is_still_generating(self) -> bool:
         try:
@@ -224,7 +249,7 @@ class ChatGPTProvider(BrowserProvider):
                     logger.debug("Found response in assistant message", length=len(text))
                     return text
 
-            prose_divs = self.page.locator("main div[tabindex='-1']").all()
+            prose_divs = await self.page.locator("main div[tabindex='-1']").all()
             for div in reversed(prose_divs):
                 try:
                     text = await div.inner_text()
@@ -248,27 +273,9 @@ class ChatGPTProvider(BrowserProvider):
 
         return ""
 
-    async def save_debug_artifacts(self, error_message: str) -> Optional[str]:
-        artifacts_dir = Path(settings.artifacts_dir)
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        request_id_part = self._request_id[:8] if self._request_id else "unknown"
-
-        screenshot_path = artifacts_dir / f"chatgpt_error_{request_id_part}_{timestamp}.png"
-        html_path = artifacts_dir / f"chatgpt_error_{request_id_part}_{timestamp}.html"
-
-        try:
-            await self.page.screenshot(path=str(screenshot_path), full_page=True)
-            logger.info("Saved screenshot", path=str(screenshot_path))
-        except Exception as e:
-            logger.warning("Screenshot failed", error=str(e))
-
-        try:
-            html_content = await self.page.content()
-            html_path.write_text(html_content, encoding="utf-8")
-            logger.info("Saved HTML", path=str(html_path))
-        except Exception as e:
-            logger.warning("HTML save failed", error=str(e))
-
-        return str(screenshot_path)
+    async def save_debug_artifacts(self, error_message: str) -> str | None:
+        return await save_debug_artifacts(
+            self.page, error_message,
+            request_id=self._request_id,
+            prefix=self.provider_id,
+        )

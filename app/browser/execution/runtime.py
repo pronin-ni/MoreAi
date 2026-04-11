@@ -24,10 +24,13 @@ class WorkerBrowserRuntime:
         self.worker_name = worker_name
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self._restart_in_progress = False
+        self._restart_event = asyncio.Event()
+        self._restart_event.set()  # Initially ready
 
     @property
     def ready(self) -> bool:
-        return self._browser is not None
+        return self._browser is not None and not self._restart_in_progress
 
     async def start(self) -> None:
         if self._browser is not None:
@@ -53,12 +56,23 @@ class WorkerBrowserRuntime:
             await playwright.stop()
 
     async def restart(self) -> None:
+        """Safe restart: signal in-flight sessions, block new ones, then restart."""
         logger.warning("Restarting browser runtime", worker_name=self.worker_name)
-        await self.stop()
-        await self.start()
+        self._restart_in_progress = True
+        self._restart_event.clear()  # Block new open_session calls
+        try:
+            await self.stop()
+            await self.start()
+        finally:
+            self._restart_in_progress = False
+            self._restart_event.set()  # Allow new open_session calls
 
     @asynccontextmanager
     async def open_session(self, storage_state_path: str | None = None):
+        """Open a session, but bail out if a restart is in progress."""
+        # Wait for any ongoing restart to complete
+        await self._restart_event.wait()
+
         if self._browser is None:
             raise BrowserError("Browser runtime is not initialized")
 
@@ -84,20 +98,16 @@ class WorkerBrowserRuntime:
 
         try:
             yield RuntimeSession(context=context, page=page)
+        except Exception:
+            # If the browser was restarted during this session,
+            # the context/page may be closed. Swallow close errors.
+            pass
         finally:
             try:
                 await page.close()
-            except Exception as exc:
-                logger.warning(
-                    "Failed to close page",
-                    worker_name=self.worker_name,
-                    error=str(exc),
-                )
+            except Exception:
+                pass
             try:
                 await context.close()
-            except Exception as exc:
-                logger.warning(
-                    "Failed to close browser context",
-                    worker_name=self.worker_name,
-                    error=str(exc),
-                )
+            except Exception:
+                pass

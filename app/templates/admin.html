@@ -46,8 +46,19 @@
                 <button class="nav-tab active" data-tab="overview">Overview</button>
                 <button class="nav-tab" data-tab="Providers">Providers</button>
                 <button class="nav-tab" data-tab="Models">Models</button>
+                <button class="nav-tab" data-tab="Health">Health</button>
                 <button class="nav-tab" data-tab="Actions">Actions</button>
+                <button class="nav-tab" data-tab="Sandbox">Sandbox</button>
+                <button class="nav-tab" data-tab="Analytics">Analytics</button>
+                <button class="nav-tab" data-tab="Canary">Canary</button>
+                <button class="nav-tab" data-tab="Healing">Healing</button>
+                <button class="nav-tab" data-tab="Recon">Recon</button>
+                <button class="nav-tab" data-tab="Baseline">Baseline</button>
+                <button class="nav-tab" data-tab="Maintenance">Maintenance</button>
                 <button class="nav-tab" data-tab="Config">Config</button>
+                <button class="nav-tab" data-tab="Pipelines">Pipelines</button>
+                <button class="nav-tab" data-tab="Scoring">Scoring</button>
+                <button class="nav-tab" data-tab="Trends">Trends</button>
             </nav>
             <div class="header-actions">
                 <button id="refresh-btn" class="btn-secondary">↻ Refresh</button>
@@ -171,6 +182,48 @@
                 </div>
             </div>
 
+            <!-- Health Tab -->
+            <div id="tab-Health" class="tab-content">
+                <div class="stats-grid" id="health-stats">
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-status">—</div>
+                        <div class="stat-label">System Status</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-workers">—</div>
+                        <div class="stat-label">Active Workers</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-queue">—</div>
+                        <div class="stat-label">Queue Depth</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="health-degraded">—</div>
+                        <div class="stat-label">Degraded</div>
+                    </div>
+                </div>
+                <div class="card mt-md hidden" id="health-degraded-card">
+                    <h3 class="card-title">Degraded Components</h3>
+                    <ul id="degraded-list" class="degraded-list"></ul>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Recent Failures</h3>
+                    <pre id="recent-failures-json" class="json-display">Loading...</pre>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Routing Plan Lookup</h3>
+                    <div class="search-bar" style="margin-bottom:0">
+                        <input type="text" id="routing-plan-model" class="form-input" placeholder="Model ID (e.g. browser/qwen)">
+                        <button class="btn-sm btn-secondary" onclick="window.__admin.lookupRoutingPlan()">Lookup</button>
+                    </div>
+                    <pre id="routing-plan-json" class="json-display" style="margin-top:var(--space-sm)">Enter a model ID and click Lookup</pre>
+                </div>
+                <div class="card mt-md">
+                    <h3 class="card-title">Recent Routing Decisions</h3>
+                    <pre id="routing-decisions-json" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
             <!-- Actions Tab -->
             <div id="tab-Actions" class="tab-content">
                 <div class="card">
@@ -197,6 +250,765 @@
                         Green = from base, blue = overridden.
                     </p>
                     <pre id="effective-config-json" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Sandbox Tab -->
+            <div id="tab-Sandbox" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Sandbox — Test Prompt</h3>
+                    <p class="config-description">Send a test prompt to any model and see the result, latency, and routing info.</p>
+                    <div class="form-group">
+                        <label class="form-label">Model</label>
+                        <select id="sandbox-model" class="form-input"></select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prompt</label>
+                        <textarea id="sandbox-prompt" class="form-input" rows="4" placeholder="Enter test prompt..."></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Max Tokens</label>
+                            <input type="number" id="sandbox-max-tokens" class="form-input" value="2048" min="1" max="32000">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Temperature</label>
+                            <input type="number" id="sandbox-temperature" class="form-input" value="0.7" min="0" max="2" step="0.1">
+                        </div>
+                    </div>
+                    <button id="sandbox-run-btn" class="btn-primary">Run Prompt</button>
+                    <div id="sandbox-result" class="json-display hidden" style="margin-top: 1rem;"></div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Compare Mode — Multi-Provider</h3>
+                    <p class="config-description">Run the same prompt against multiple models and compare results side by side.</p>
+                    <div class="form-group">
+                        <label class="form-label">Models (comma-separated)</label>
+                        <input type="text" id="compare-models" class="form-input" placeholder="browser/yandex, browser/qwen, browser/glm">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prompt</label>
+                        <textarea id="compare-prompt" class="form-input" rows="3" placeholder="Enter prompt to compare..."></textarea>
+                    </div>
+                    <button id="compare-run-btn" class="btn-primary">Run Comparison</button>
+                    <div id="compare-result" class="json-display hidden" style="margin-top: 1rem;"></div>
+                </div>
+            </div>
+
+            <!-- Analytics Tab -->
+            <div id="tab-Analytics" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-total-requests">—</div>
+                        <div class="stat-label">Total Requests</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-error-rate">—</div>
+                        <div class="stat-label">Error Rate</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-fallbacks">—</div>
+                        <div class="stat-label">Fallbacks</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="analytics-models-count">—</div>
+                        <div class="stat-label">Active Models</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Top Models</h3>
+                    <pre id="analytics-top-models" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Top Providers</h3>
+                    <pre id="analytics-top-providers" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Error Summary</h3>
+                    <pre id="analytics-errors" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Fallback Summary</h3>
+                    <pre id="analytics-fallbacks-detail" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Canary Tab -->
+            <div id="tab-Canary" class="tab-content">
+                <div class="card">
+                    <h3 class="card-title">Canary / Experimental Models</h3>
+                    <p class="config-description">Manage experimental model rollouts with traffic splitting and auto-rollback guards.</p>
+
+                    <div class="form-group">
+                        <label class="form-label">Model ID</label>
+                        <input type="text" id="canary-model-id" class="form-input" placeholder="e.g. browser/qwen">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Provider ID</label>
+                        <input type="text" id="canary-provider-id" class="form-input" placeholder="e.g. qwen">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Status</label>
+                            <select id="canary-status" class="form-input">
+                                <option value="draft">Draft</option>
+                                <option value="canary">Canary</option>
+                                <option value="rollout">Rollout</option>
+                                <option value="ga">GA</option>
+                                <option value="deprecated">Deprecated</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Traffic %</label>
+                            <input type="number" id="canary-traffic" class="form-input" value="10" min="0" max="100" step="5">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Error Threshold</label>
+                            <input type="number" id="canary-error-threshold" class="form-input" value="0.1" min="0" max="1" step="0.05">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Notes</label>
+                        <input type="text" id="canary-notes" class="form-input" placeholder="Optional notes...">
+                    </div>
+                    <button id="canary-register-btn" class="btn-primary">Register Canary</button>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Active Canaries</h3>
+                    <pre id="canary-active" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Canary History</h3>
+                    <pre id="canary-history-list" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Healing Tab -->
+            <div id="tab-Healing" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="healing-total">—</div>
+                        <div class="stat-label">Total Checks</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-success);">
+                        <div class="stat-value" id="healing-healthy">—</div>
+                        <div class="stat-label">Healthy</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-warning);">
+                        <div class="stat-value" id="healing-degrading">—</div>
+                        <div class="stat-label">Degrading</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="healing-broken">—</div>
+                        <div class="stat-label">Broken</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Selector Health</h3>
+                    <p class="config-description">Health score per provider + role. Green = healthy (&gt;0.8), Yellow = degrading (0.5–0.8), Red = broken (&lt;0.5).</p>
+                    <div id="healing-health-table" style="overflow-x: auto;">
+                        <table class="healing-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Health</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Primary</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Fallback</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Healing</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody id="healing-health-tbody">
+                                <tr><td colspan="8" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Healed Locator Cache</h3>
+                    <pre id="healing-cache" class="json-display">Loading...</pre>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Healing Candidates</h3>
+                    <pre id="healing-candidates" class="json-display">Loading...</pre>
+                </div>
+            </div>
+
+            <!-- Recon Tab -->
+            <div id="tab-Recon" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="recon-attempts">—</div>
+                        <div class="stat-label">Total Attempts</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-success);">
+                        <div class="stat-value" id="recon-successes">—</div>
+                        <div class="stat-label">Successes</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-warning);">
+                        <div class="stat-value" id="recon-partials">—</div>
+                        <div class="stat-label">Partials</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="recon-failures">—</div>
+                        <div class="stat-label">Failures</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="recon-success-rate">—</div>
+                        <div class="stat-label">Success Rate</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="recon-avg-duration">—</div>
+                        <div class="stat-label">Avg Duration (ms)</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Per-Provider Recon Stats</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="recon-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Attempts</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Success Rate</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Partials</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Failures</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Avg Duration</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Last Result</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recon-provider-tbody">
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Recon Events</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="recon-events-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Trigger</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Result</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Replay</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Reason/Blocking</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recon-events-tbody">
+                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Quick Actions</h3>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button id="recon-refresh-btn" class="btn-secondary">↻ Refresh Data</button>
+                        <button id="recon-clear-btn" class="btn-secondary" style="border-color: var(--admin-error); color: var(--admin-error);">Clear Recon Telemetry</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DOM Baseline Tab -->
+            <div id="tab-Baseline" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="baseline-total">—</div>
+                        <div class="stat-label">Total Baselines</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="baseline-providers">—</div>
+                        <div class="stat-label">Providers Covered</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-warning);">
+                        <div class="stat-value" id="drift-total">—</div>
+                        <div class="stat-label">Drift Events</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="drift-high">—</div>
+                        <div class="stat-label">High Severity</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Baseline Coverage</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="baseline-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Roles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="baseline-coverage-tbody">
+                                <tr><td colspan="2" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Drift Events</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="drift-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Severity</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Summary</th>
+                                </tr>
+                            </thead>
+                            <tbody id="drift-events-tbody">
+                                <tr><td colspan="4" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Baseline Refresh</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="refresh-status-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Attempts</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Successes</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Last Result</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="refresh-status-tbody">
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button id="refresh-all-btn" class="btn-secondary">↻ Refresh All Providers</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Recent Refresh Events</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="refresh-events-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Updates</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Drift/Abort</th>
+                                </tr>
+                            </thead>
+                            <tbody id="refresh-events-tbody">
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">No events yet</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Import / Export</h3>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
+                        <button id="export-baselines-btn" class="btn-secondary">📤 Export Baselines</button>
+                        <button id="export-overrides-btn" class="btn-secondary">📤 Export Overrides</button>
+                        <button id="import-baselines-btn" class="btn-secondary">📥 Import Baselines</button>
+                        <button id="import-overrides-btn" class="btn-secondary">📥 Import Overrides</button>
+                    </div>
+                    <input type="file" id="import-file-input" style="display: none;" accept=".json">
+                    <div id="import-result" style="margin-top: 0.5rem; font-size: 0.8rem;"></div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Quick Actions</h3>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button id="baseline-refresh-btn" class="btn-secondary">↻ Refresh Data</button>
+                        <button id="baseline-clear-btn" class="btn-secondary" style="border-color: var(--admin-error); color: var(--admin-error);">Clear All Baselines</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Selector Maintenance Tab -->
+            <div id="tab-Maintenance" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="maintenance-pending">—</div>
+                        <div class="stat-label">Pending Suggestions</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-success);">
+                        <div class="stat-value" id="maintenance-approved">—</div>
+                        <div class="stat-label">Approved</div>
+                    </div>
+                    <div class="stat-card" style="border-color: var(--admin-error);">
+                        <div class="stat-value" id="maintenance-rejected">—</div>
+                        <div class="stat-label">Rejected</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="maintenance-overrides">—</div>
+                        <div class="stat-label">Active Overrides</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Pending Suggestions</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="suggestions-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Suggested</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Confidence</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Times</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="suggestions-tbody">
+                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3 class="card-title">Active Overrides</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="overrides-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Override Selector</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Source</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="overrides-tbody">
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scoring Tab -->
+            <div id="tab-Scoring" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Stage Scoring Breakdown</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="scoring-role-select" onchange="loadScoringData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="generate">generate</option>
+                                <option value="review">review</option>
+                                <option value="critique">critique</option>
+                                <option value="refine">refine</option>
+                                <option value="verify">verify</option>
+                                <option value="transform">transform</option>
+                            </select>
+                            <button class="btn-secondary" onclick="loadScoringData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Base</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Dynamic</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Quality</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Q Adj</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Penalty</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Samples</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Confidence</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Badges</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Tags</th>
+                                </tr>
+                            </thead>
+                            <tbody id="scoring-tbody">
+                                <tr><td colspan="14" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trends Tab -->
+            <div id="tab-Trends" class="tab-content">
+                <!-- Trend Summary Cards -->
+                <div class="stats-grid" id="trend-stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-improvers-count">—</div>
+                        <div class="stat-label">Improving Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-decliners-count">—</div>
+                        <div class="stat-label">Declining Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-unstable-count">—</div>
+                        <div class="stat-label">Unstable Models</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="trend-stable-count">—</div>
+                        <div class="stat-label">Stable Models</div>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">Trend Controls</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="trends-role-select" onchange="loadTrendsData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="">All Roles</option>
+                                <option value="generate">generate</option>
+                                <option value="review">review</option>
+                                <option value="critique">critique</option>
+                                <option value="refine">refine</option>
+                                <option value="verify">verify</option>
+                                <option value="transform">transform</option>
+                            </select>
+                            <select id="trends-window-select" onchange="loadTrendsData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="24h">24h</option>
+                                <option value="1h">1h</option>
+                                <option value="7d">7d</option>
+                            </select>
+                            <button class="btn-secondary" onclick="loadTrendsData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                            <button class="btn-secondary" onclick="triggerSnapshot()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">📸 Capture Snapshot</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Improvers -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">📈 Top Improving Models</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="improvers-tbody">
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Top Decliners -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">📉 Top Declining Models</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="decliners-tbody">
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Unstable Models -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">⚡ Unstable Models</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="unstable-tbody">
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Full Trend Table -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">All Trends</h3>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;">Role</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Δ Duration</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Driver</th>
+                                    <th style="padding: 0.4rem; text-align: center;">Points</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trends-tbody">
+                                <tr><td colspan="10" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pipelines Tab -->
+            <div id="tab-Pipelines" class="tab-content">
+                <!-- Overview Cards -->
+                <div class="stats-grid" id="pipeline-stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-total">—</div>
+                        <div class="stat-label">Total Pipelines</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-enabled">—</div>
+                        <div class="stat-label">Enabled</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-executions">—</div>
+                        <div class="stat-label">Recent Executions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="pl-stat-success">—</div>
+                        <div class="stat-label">Success Rate</div>
+                    </div>
+                </div>
+
+                <!-- Pipeline Definitions Table -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">Pipeline Definitions</h3>
+                        <button class="btn-secondary" onclick="loadPipelineDefinitions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Pipeline ID</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Display Name</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Stages</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Success Rate</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Avg Duration</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pl-definitions-tbody">
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Recent Executions Table -->
+                <div class="card" style="margin-top: 1rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">Recent Executions</h3>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="pl-exec-pipeline-filter" onchange="loadRecentExecutions()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="">All Pipelines</option>
+                            </select>
+                            <select id="pl-exec-status-filter" onchange="loadRecentExecutions()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
+                                <option value="">All Status</option>
+                                <option value="success">Success</option>
+                                <option value="failed">Failed</option>
+                                <option value="partial">Partial</option>
+                            </select>
+                            <button class="btn-secondary" onclick="loadRecentExecutions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--admin-border);">
+                                    <th style="padding: 0.5rem; text-align: left;">Execution ID</th>
+                                    <th style="padding: 0.5rem; text-align: left;">Pipeline</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Status</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Duration</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Stages</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Fallbacks</th>
+                                    <th style="padding: 0.5rem; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pl-executions-tbody">
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">No executions yet</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Execution Trace Modal -->
+                <div id="pl-trace-modal" class="modal hidden">
+                    <div class="modal-content" style="max-width: 900px; max-height: 80vh; overflow-y: auto;">
+                        <div class="modal-header">
+                            <h3 class="modal-title">Execution Trace</h3>
+                            <button class="modal-close" onclick="closeTraceModal()">×</button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="pl-trace-content"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>

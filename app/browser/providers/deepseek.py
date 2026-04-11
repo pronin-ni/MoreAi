@@ -1,12 +1,14 @@
 import asyncio
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
-from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import Locator, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.browser.base import BrowserProvider
-from app.core.config import settings
+from app.browser.capabilities import ProviderCapabilities
+from app.browser.debug_artifacts import save_debug_artifacts
+from app.browser.page_helpers import first_visible
+from app.browser.response_waiter import ResponseWaitConfig, ResponseWaiter
+from app.browser.selectors import SelectorDef
 from app.core.errors import (
     BrowserError,
     GenerationTimeoutError,
@@ -27,32 +29,49 @@ class DeepseekProvider(BrowserProvider):
     requires_auth = True
 
     def __init__(
-        self, page: Page, request_id: Optional[str] = None, provider_config: Optional[dict] = None
+        self, page: Page, request_id: str | None = None, provider_config: dict | None = None
     ):
         super().__init__(page, request_id=request_id, provider_config=provider_config)
         self._last_user_message = ""
 
     @classmethod
+    def get_capabilities(cls) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider_id=cls.provider_id,
+            model_name=cls.model_name,
+            display_name=cls.display_name,
+            target_url=cls.target_url,
+            requires_auth=True,
+            auth_mode="credentials",
+            send_mechanism="button",
+            response_strategy="input_visible",
+            input_selectors_hint=(
+                'textarea[placeholder="Сообщение для DeepSeek"]',
+                'textarea[placeholder*="DeepSeek"]',
+            ),
+            send_selectors_hint=(
+                '[role="button"][aria-disabled="false"]',
+                '.ds-icon-button[role="button"][aria-disabled="false"]',
+            ),
+            login_wall_selectors_hint=(
+                "text=Номер телефона / адрес электронной почты",
+                'input[type="password"]',
+                "text=Войти",
+            ),
+            default_stable_threshold=2,
+        )
+
+    @classmethod
     def recon_hints(cls) -> dict[str, list[str] | str | bool | None]:
+        caps = cls.get_capabilities()
         return {
-            "provider_id": cls.provider_id,
-            "model_name": cls.model_name,
-            "display_name": cls.display_name,
-            "target_url": cls.target_url,
-            "requires_auth": cls.requires_auth,
-            "auth_provider": cls.auth_provider,
+            **super().recon_hints(),
             "new_chat": [
                 "text=Новый чат",
                 '[role="button"]:has-text("Новый чат")',
             ],
-            "input": [
-                'textarea[placeholder="Сообщение для DeepSeek"]',
-                'textarea[placeholder*="DeepSeek"]',
-            ],
-            "send": [
-                '[role="button"][aria-disabled="false"]',
-                '.ds-icon-button[role="button"][aria-disabled="false"]',
-            ],
+            "input": list(caps.input_selectors_hint),
+            "send": list(caps.send_selectors_hint),
             "assistant_response": [
                 ".ds-message .ds-markdown",
                 "p.ds-markdown-paragraph",
@@ -61,12 +80,10 @@ class DeepseekProvider(BrowserProvider):
                 'button:has-text("Глубокое мышление")',
                 'button:has-text("Умный поиск")',
             ],
-            "login_wall": [
-                "text=Номер телефона / адрес электронной почты",
-                'input[type="password"]',
-                "text=Войти",
-            ],
+            "login_wall": list(caps.login_wall_selectors_hint),
         }
+
+    # -- Navigation --
 
     async def navigate_to_chat(self) -> None:
         url = self.provider_config.get("url") or self.target_url
@@ -79,6 +96,8 @@ class DeepseekProvider(BrowserProvider):
         await self._dismiss_cookie_banner()
         if not await self.detect_login_required():
             await self._wait_until_chat_ready(timeout_ms=10_000)
+
+    # -- Auth --
 
     async def authenticate_with_credentials(self, credentials: dict[str, str]) -> None:
         email = credentials.get("email")
@@ -135,6 +154,8 @@ class DeepseekProvider(BrowserProvider):
 
         raise BrowserError("DeepSeek did not become ready after credential login")
 
+    # -- Chat management --
+
     async def start_new_chat(self) -> None:
         if await self.detect_login_required():
             raise BrowserError("DeepSeek is still behind the login wall")
@@ -155,12 +176,23 @@ class DeepseekProvider(BrowserProvider):
         await self._dismiss_cookie_banner()
         await self._wait_until_chat_ready(timeout_ms=10_000)
 
+    # -- Send --
+
     async def send_message(self, text: str) -> None:
         if await self.detect_login_required():
             raise BrowserError("DeepSeek requires login before sending a message")
 
         self._last_user_message = text.strip()
         input_locator = await self._find_message_input(timeout_ms=8_000)
+        if input_locator is None:
+            # Self-healing fallback
+            selectors = [
+                SelectorDef.placeholder("Сообщение для DeepSeek", first=True, description="placeholder[Сообщение]"),
+                SelectorDef.css('textarea[placeholder="Сообщение для DeepSeek"]', first=True, description="textarea[Сообщение]"),
+                SelectorDef.css('textarea[placeholder*="DeepSeek"]', first=True, description="textarea[DeepSeek]"),
+            ]
+            input_locator = await self._try_healing_input(selectors)
+
         if input_locator is None:
             raise MessageInputNotFoundError("DeepSeek message input not found")
 
@@ -173,42 +205,85 @@ class DeepseekProvider(BrowserProvider):
 
         await self._wait_for_generation_start(timeout=10)
 
+    # -- Response wait --
+
     async def wait_for_response(self, timeout: int = 120) -> str:
-        start_time = asyncio.get_event_loop().time()
-        last_text = ""
-        stable_seconds = 0.0
+        waiter = ResponseWaiter(
+            provider_id=self.provider_id,
+            request_id=self._request_id,
+        )
+
         saw_explicit_completion_signal = False
 
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            if await self.detect_login_required():
-                raise BrowserError("DeepSeek response flow was interrupted by a login wall")
+        async def extract_fn() -> str:
+            return await self._extract_assistant_response()
 
-            response_text = await self._extract_assistant_response()
-            if response_text and response_text != last_text:
-                last_text = response_text
-                stable_seconds = 0.0
-            elif response_text and response_text == last_text:
-                stable_seconds += 1.0
+        async def check_interrupted_fn() -> bool:
+            return await self.detect_login_required()
 
+        async def check_done_fn() -> bool:
+            nonlocal saw_explicit_completion_signal
             input_visible = await self._is_input_visible(timeout_ms=500)
-            if last_text and input_visible:
+            if input_visible:
                 saw_explicit_completion_signal = True
+            return False
 
-            if last_text:
-                if saw_explicit_completion_signal and stable_seconds >= 2.0:
-                    return last_text
-                if stable_seconds >= 3.0:
-                    return last_text
+        try:
+            return await waiter.wait(
+                config=ResponseWaitConfig(
+                    timeout=timeout,
+                    stable_threshold=2,
+                    poll_interval=1.0,
+                    min_response_length=1,
+                ),
+                extract_fn=extract_fn,
+                check_interrupted_fn=check_interrupted_fn,
+            )
+        except GenerationTimeoutError:
+            raise
+        except BrowserError:
+            raise
+        except Exception as exc:
+            raise GenerationTimeoutError(
+                f"DeepSeek response generation timed out after {timeout} seconds",
+                details={"timeout": timeout, "error": str(exc)},
+            )
 
-            await asyncio.sleep(1)
+    async def _try_healing_input(self, tried_selectors: list[SelectorDef]) -> Locator | None:
+        """Attempt self-healing to find message input."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "message_input",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found message input",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
 
-        if last_text:
-            return last_text
+    async def _try_healing_send(self, tried_selectors: list[SelectorDef]) -> Locator | None:
+        """Attempt self-healing to find send button."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "send_button",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found send button",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
 
-        raise GenerationTimeoutError(
-            f"DeepSeek response generation timed out after {timeout} seconds",
-            details={"timeout": timeout},
-        )
+    # -- Login detection --
 
     async def detect_login_required(self) -> bool:
         if "/sign_in" in self.page.url:
@@ -230,29 +305,16 @@ class DeepseekProvider(BrowserProvider):
                 continue
         return False
 
-    async def save_debug_artifacts(self, error_message: str) -> Optional[str]:
-        artifacts_dir = Path(settings.artifacts_dir)
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
+    # -- Debug artifacts (shared) --
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        request_id_part = self._request_id[:8] if self._request_id else "unknown"
-        screenshot_path = artifacts_dir / f"deepseek_error_{request_id_part}_{timestamp}.png"
-        html_path = artifacts_dir / f"deepseek_error_{request_id_part}_{timestamp}.html"
-
-        try:
-            await self.page.screenshot(path=str(screenshot_path), full_page=True)
-        except Exception as exc:
-            logger.warning("Failed to save DeepSeek screenshot", error=str(exc))
-
-        try:
-            html_path.write_text(await self.page.content(), encoding="utf-8")
-        except Exception as exc:
-            logger.warning("Failed to save DeepSeek HTML", error=str(exc))
-
-        logger.info(
-            "Saved DeepSeek debug artifacts", screenshot=str(screenshot_path), error=error_message
+    async def save_debug_artifacts(self, error_message: str) -> str | None:
+        return await save_debug_artifacts(
+            self.page, error_message,
+            request_id=self._request_id,
+            prefix=self.provider_id,
         )
-        return str(screenshot_path)
+
+    # -- Private helpers --
 
     async def _dismiss_cookie_banner(self) -> None:
         for button_name in ("Принять все файлы cookie", "Только необходимые файлы cookie"):
@@ -293,28 +355,42 @@ class DeepseekProvider(BrowserProvider):
         )
 
     async def _find_message_input(self, timeout_ms: int = 5_000) -> Locator | None:
-        return await self._first_visible_locator(
-            [
-                lambda: self.page.get_by_placeholder("Сообщение для DeepSeek").first,
-                lambda: self.page.locator('textarea[placeholder="Сообщение для DeepSeek"]').first,
-                lambda: self.page.locator('textarea[placeholder*="DeepSeek"]').first,
-            ],
-            timeout_ms=timeout_ms,
+        selectors = [
+            SelectorDef.placeholder("Сообщение для DeepSeek", first=True, description="placeholder[Сообщение]"),
+            SelectorDef.css('textarea[placeholder="Сообщение для DeepSeek"]', first=True, description="textarea[Сообщение]"),
+            SelectorDef.css('textarea[placeholder*="DeepSeek"]', first=True, description="textarea[DeepSeek]"),
+        ]
+        return await first_visible(
+            self.page, selectors, timeout_ms=timeout_ms,
+            telemetry_callback=self._record_selector,
         )
 
     async def _click_send_button(self) -> None:
-        candidates = [
-            lambda: self.page.locator('.ds-icon-button[role="button"][aria-disabled="false"]').last,
-            lambda: self.page.locator('[role="button"][aria-disabled="false"]').last,
+        selectors = [
+            SelectorDef.css('.ds-icon-button[role="button"][aria-disabled="false"]', last=True, description="ds-icon-button"),
+            SelectorDef.css('[role="button"][aria-disabled="false"]', last=True, description="role=button[aria-disabled]"),
         ]
-        for candidate in candidates:
+
+        for sel in selectors:
             try:
-                locator = candidate()
-                await locator.wait_for(state="visible", timeout=2_000)
-                await locator.click(force=True)
+                loc = sel.resolve(self.page)
+                await loc.wait_for(state="visible", timeout=2_000)
+                await loc.click(force=True)
+                self._record_selector(sel.description or sel.value, True)
                 return
             except Exception:
+                self._record_selector(sel.description or sel.value, False)
                 continue
+
+        # Self-healing fallback
+        healed = await self._try_healing_send(selectors)
+        if healed is not None:
+            try:
+                await healed.click(force=True)
+                return
+            except Exception:
+                pass
+
         raise SendButtonNotFoundError("DeepSeek send button not found or stayed disabled")
 
     async def _disable_optional_modes(self) -> None:

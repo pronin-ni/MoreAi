@@ -1,19 +1,23 @@
 import asyncio
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.browser.base import BrowserProvider
-from app.core.config import settings
-from app.core.logging import get_logger
+from app.browser.capabilities import ProviderCapabilities
+from app.browser.page_helpers import first_visible
+from app.browser.response_waiter import ResponseWaitConfig, ResponseWaiter
+from app.browser.selectors import SelectorDef
 from app.core.errors import (
-    MessageInputNotFoundError,
-    SendButtonNotFoundError,
     AssistantMessageNotFoundError,
     GenerationTimeoutError,
+    MessageInputNotFoundError,
+    SendButtonNotFoundError,
 )
+from app.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from playwright.async_api import Locator
 
 logger = get_logger(__name__)
 
@@ -25,6 +29,28 @@ class QwenProvider(BrowserProvider):
     model_name = "qwen"
     display_name = "Qwen Chat"
     target_url = "https://chat.qwen.ai/"
+
+    @classmethod
+    def get_capabilities(cls) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider_id=cls.provider_id,
+            model_name=cls.model_name,
+            display_name=cls.display_name,
+            target_url=cls.target_url,
+            send_mechanism="button",
+            response_strategy="input_hidden",
+            input_selectors_hint=(
+                'role=textbox[name="Чем я могу помочь"]',
+                'textarea[placeholder*="Чем"]',
+            ),
+            send_selectors_hint=(
+                'button:has(img[src*="send"])',
+                'main button:nth(1)',
+            ),
+            default_stable_threshold=3,
+        )
+
+    # -- Navigation --
 
     async def navigate_to_chat(self) -> None:
         logger.info("Navigating to Qwen Chat", url=self.target_url)
@@ -71,55 +97,71 @@ class QwenProvider(BrowserProvider):
         except PlaywrightTimeout:
             logger.warning("Could not verify new chat state")
 
+    # -- Send --
+
     async def send_message(self, text: str) -> None:
         await self._fill_message_input(text)
         await self._click_send_button()
 
     async def _fill_message_input(self, text: str) -> None:
-        selectors_to_try = [
-            lambda: self.page.get_by_role("textbox", name="Чем я могу помочь"),
-            lambda: self.page.locator('textarea[placeholder*="Чем"]'),
-            lambda: self.page.locator("textarea").first,
-            lambda: self.page.locator("main textarea"),
+        selectors = [
+            SelectorDef.role("textbox", name="Чем я могу помочь", description="role=textbox[Чем]"),
+            SelectorDef.css('textarea[placeholder*="Чем"]', description="textarea[Чем]"),
+            SelectorDef.raw("textarea", first=True, description="textarea.first"),
+            SelectorDef.raw("main textarea", description="main textarea"),
         ]
 
-        input_locator = None
-        for selector_fn in selectors_to_try:
-            try:
-                locator = selector_fn()
-                if await locator.is_visible(timeout=2000):
-                    input_locator = locator
-                    logger.debug("Found input with selector", selector_type=type(locator).__name__)
-                    break
-            except Exception:
-                continue
+        input_locator = await first_visible(
+            self.page, selectors, timeout_ms=2000,
+            telemetry_callback=self._record_selector,
+        )
+
+        if not input_locator:
+            # Self-healing fallback
+            input_locator = await self._try_healing_input(selectors)
 
         if not input_locator:
             raise MessageInputNotFoundError(
                 "Message input not found with any selector",
-                details={"tried_selectors": len(selectors_to_try)},
+                details={"tried_selectors": len(selectors)},
             )
 
         await input_locator.fill(text)
         logger.debug("Filled message input", text_length=len(text))
 
+    async def _try_healing_input(self, tried_selectors: list[SelectorDef]) -> Locator | None:
+        """Attempt self-healing to find message input."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "message_input",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found message input",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
+
     async def _click_send_button(self) -> None:
-        selectors_to_try = [
-            lambda: self.page.locator('button:has(img[src*="send"])'),
-            lambda: self.page.locator("main button").nth(1),
-            lambda: self.page.locator("button:has(img)").last,
-            lambda: self.page.get_by_role("button").nth(2),
+        selectors = [
+            SelectorDef.css('button:has(img[src*="send"])', description="button:has(send_img)"),
+            SelectorDef.raw("main button", nth=1, description="main button:nth(1)"),
+            SelectorDef.css("button:has(img)", last=True, description="button:has(img).last"),
+            SelectorDef.role("button", nth=2, description="role=button:nth(2)"),
         ]
 
-        button_locator = None
-        for selector_fn in selectors_to_try:
-            try:
-                locator = selector_fn()
-                if await locator.is_visible(timeout=2000):
-                    button_locator = locator
-                    break
-            except Exception:
-                continue
+        button_locator = await first_visible(
+            self.page, selectors, timeout_ms=2000,
+            telemetry_callback=self._record_selector,
+        )
+
+        if not button_locator:
+            # Self-healing fallback
+            button_locator = await self._try_healing_send(selectors)
 
         if not button_locator:
             raise SendButtonNotFoundError("Send button not found with any selector")
@@ -127,107 +169,79 @@ class QwenProvider(BrowserProvider):
         await button_locator.click()
         logger.info("Clicked send button")
 
+    async def _try_healing_send(self, tried_selectors: list[SelectorDef]) -> Locator | None:
+        """Attempt self-healing to find send button."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "send_button",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found send button",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
+
+    # -- Response wait --
+
     async def wait_for_response(self, timeout: int = 120) -> str:
         logger.info("Waiting for response generation", timeout=timeout)
 
-        try:
-            await self._wait_for_response_start(timeout=30)
-
-            response_text = await self._wait_for_response_end(timeout=timeout)
-
-            logger.info("Received response from assistant", response_length=len(response_text))
-            return response_text
-
-        except PlaywrightTimeout:
-            raise GenerationTimeoutError(
-                f"Response generation timed out after {timeout} seconds",
-                details={"timeout": timeout},
-            )
-
-    async def _wait_for_response_start(self, timeout: int = 30) -> None:
-        try:
-            help_textbox = self.page.get_by_role("textbox", name="Чем я могу помочь")
-            await help_textbox.wait_for(state="hidden", timeout=timeout * 1000)
-            logger.debug("Input hidden - generation started")
-        except PlaywrightTimeout:
-            logger.debug("Input still visible, checking for response")
-
-    async def _wait_for_response_end(self, timeout: int = 120) -> str:
-        start_time = asyncio.get_event_loop().time()
-        last_text = ""
-        stable_count = 0
-
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            try:
-                response = await self._extract_assistant_response()
-
-                if response and response != last_text:
-                    last_text = response
-                    stable_count = 0
-                elif response and response == last_text:
-                    stable_count += 1
-                    if stable_count >= 3:
-                        logger.debug("Response stable after 3 checks")
-                        return response
-
-            except AssistantMessageNotFoundError:
-                pass
-
-            await asyncio.sleep(0.5)
-
-        if last_text:
-            logger.debug("Returning last known response", text_length=len(last_text))
-            return last_text
-
-        raise AssistantMessageNotFoundError(
-            "No assistant response found after timeout",
-            details={"timeout": timeout},
+        waiter = ResponseWaiter(
+            provider_id=self.provider_id,
+            request_id=self._request_id,
         )
 
+        async def extract_fn() -> str:
+            return await self._extract_assistant_response()
+
+        try:
+            return await waiter.wait(
+                config=ResponseWaitConfig(
+                    timeout=timeout,
+                    stable_threshold=3,
+                    poll_interval=0.5,
+                    min_response_length=1,
+                ),
+                extract_fn=extract_fn,
+            )
+        except GenerationTimeoutError:
+            raise
+        except Exception as exc:
+            raise GenerationTimeoutError(
+                f"Response generation timed out after {timeout} seconds",
+                details={"timeout": timeout, "error": str(exc)},
+            )
+
     async def _extract_assistant_response(self) -> str:
-        selectors_to_try = [
-            lambda: self.page.locator("main p:last-of-type"),
-            lambda: self.page.locator("main").locator("p").last,
-            lambda: self.page.locator("main > div > p").last,
-            lambda: self.page.locator('[class*="message"]').last,
+        selectors = [
+            SelectorDef.raw("main p:last-of-type", description="main p:last-of-type"),
+            SelectorDef.raw("main > div > p", last=True, description="main>div>p.last"),
+            SelectorDef.raw('[class*="message"]', last=True, description='[class*="message"].last'),
         ]
 
-        for selector_fn in selectors_to_try:
+        for sel in selectors:
             try:
-                locator = selector_fn()
-                text = await locator.inner_text(timeout=2000)
+                loc = sel.resolve(self.page)
+                text = await loc.inner_text(timeout=2000)
                 if text and text.strip():
                     text = text.strip()
-                    user_message = self.page.locator("main p").first
-                    user_text = await user_message.inner_text(timeout=1000) if user_message else ""
-                    if text != user_text:
+                    # Deduplicate user message
+                    try:
+                        user_message = self.page.locator("main p").first
+                        user_text = await user_message.inner_text(timeout=1000) if user_message else ""
+                        if text != user_text:
+                            self._record_selector(sel.description or sel.value, True)
+                            return text
+                    except Exception:
+                        self._record_selector(sel.description or sel.value, True)
                         return text
             except Exception:
+                self._record_selector(sel.description or sel.value, False)
                 continue
 
         raise AssistantMessageNotFoundError("Assistant message not found")
-
-    async def save_debug_artifacts(self, error_message: str) -> Optional[str]:
-        artifacts_dir = Path(settings.artifacts_dir)
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        request_id_part = self._request_id[:8] if self._request_id else "unknown"
-
-        screenshot_path = artifacts_dir / f"error_{request_id_part}_{timestamp}.png"
-        html_path = artifacts_dir / f"error_{request_id_part}_{timestamp}.html"
-
-        try:
-            await self.page.screenshot(path=str(screenshot_path), full_page=True)
-            logger.info("Saved error screenshot", path=str(screenshot_path))
-        except Exception as e:
-            logger.warning("Failed to save screenshot", error=str(e))
-
-        try:
-            html_content = await self.page.content()
-            html_path.write_text(html_content, encoding="utf-8")
-            logger.info("Saved error HTML", path=str(html_path))
-        except Exception as e:
-            logger.warning("Failed to save HTML", error=str(e))
-
-        return str(screenshot_path)

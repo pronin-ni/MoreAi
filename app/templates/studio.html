@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}MoreAI Studio{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/studio.css">
+{% endblock %}
+
+{% block content %}
+<div class="studio-container">
+
+    <!-- Left Sidebar: Chat List + Mode Selector -->
+    <aside class="studio-sidebar">
+        <div class="studio-sidebar-header">
+            <span class="studio-logo">Studio</span>
+            <a href="/ui" class="studio-simple-link" title="Simple chat">Simple →</a>
+        </div>
+
+        <!-- New Chat Button -->
+        <button class="studio-new-chat" onclick="clearChat()">
+            + New Chat
+        </button>
+
+        <!-- Chat List -->
+        <div class="studio-chat-list" id="studio-chat-list">
+            <!-- Populated by JS -->
+        </div>
+
+        <!-- Mode Selector -->
+        <div class="studio-modes">
+            <div class="studio-modes-label">Response Mode</div>
+            {% for m in modes %}
+            <label class="studio-mode {% if m.key == default_mode %}selected{% endif %}"
+                   data-mode="{{ m.key }}"
+                   data-available="{{ m.available|lower }}">
+                <input type="radio" name="studio-mode" value="{{ m.key }}"
+                       {% if m.key == default_mode %}checked{% endif %}
+                       {% if not m.available %}disabled{% endif %}>
+                <div class="studio-mode-content">
+                    <span class="studio-mode-label">{{ m.label }}</span>
+                    {% if m.is_pipeline %}
+                    <span class="studio-mode-badge pipeline">pipeline</span>
+                    {% else %}
+                    <span class="studio-mode-badge model">model</span>
+                    {% endif %}
+                </div>
+                <span class="studio-mode-desc">{{ m.description }}</span>
+            </label>
+            {% endfor %}
+        </div>
+
+        <!-- Advanced Toggle -->
+        <details class="studio-advanced">
+            <summary>Advanced</summary>
+            <div class="studio-advanced-content">
+                <label class="studio-advanced-field">
+                    <span>Request Type</span>
+                    <select id="studio-advanced-type" onchange="toggleAdvancedModel()">
+                        <option value="standard">Use mode selection</option>
+                        <option value="custom_model">Specify model</option>
+                    </select>
+                </label>
+                <div id="studio-advanced-model-field" style="display:none;">
+                    <label class="studio-advanced-field">
+                        <span>Model</span>
+                        <select id="studio-advanced-model">
+                            {% for g in [("Browser", browser_models), ("API", api_models), ("Agent", agent_models)] %}
+                            {% if g[1] %}
+                            <optgroup label="{{ g[0] }}">
+                                {% for m in g[1] %}
+                                <option value="{{ m.id }}" {% if not m.enabled %}disabled{% endif %}>
+                                    {{ m.display_name }} {% if not m.enabled %}(disabled){% endif %}
+                                </option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+            </div>
+        </details>
+    </aside>
+
+    <!-- Center: Chat Area -->
+    <main class="studio-chat">
+        <!-- Chat Header -->
+        <div class="studio-chat-header">
+            <span id="studio-mode-badge" class="studio-current-mode">{{ STUDIO_MODES.get(default_mode, {}).get('label', 'Balanced') }}</span>
+            <span id="studio-pipeline-indicator" class="studio-pipeline-indicator" style="display:none;">Pipeline</span>
+        </div>
+
+        <!-- Messages Area -->
+        <div class="studio-messages" id="studio-messages">
+            <div class="studio-welcome">
+                <div class="studio-welcome-title">MoreAI Studio</div>
+                <div class="studio-welcome-desc">Smart chat with pipeline-aware execution.
+                    Choose a mode and ask anything.</div>
+                <div class="studio-welcome-modes">
+                    {% for m in modes %}
+                    <span class="studio-welcome-chip" onclick="selectMode('{{ m.key }}')">{{ m.label }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div class="studio-loading" id="studio-loading" style="display:none;">
+            <div class="studio-loading-spinner"></div>
+            <span id="studio-loading-text">Thinking...</span>
+        </div>
+
+        <!-- Input Area -->
+        <div class="studio-input-area">
+            <form id="studio-chat-form"
+                  hx-post="/studio/chat"
+                  hx-target="#studio-response-target"
+                  hx-swap="innerHTML"
+                  hx-sync="this:queue"
+                  hx-indicator="#studio-loading"
+                  hx-on::before-request="onStudioRequest()"
+                  hx-on::after-request="onStudioResponse()">
+                <input type="hidden" name="mode" id="studio-mode-input" value="{{ default_mode }}">
+                <input type="hidden" name="conversation_json" id="studio-conversation-input" value="[]">
+                <input type="hidden" name="advanced_type" id="studio-advanced-type-input" value="standard">
+                <input type="hidden" name="advanced_model" id="studio-advanced-model-input" value="">
+                <textarea
+                    id="studio-message-input"
+                    name="message"
+                    placeholder="Ask anything..."
+                    rows="1"
+                    autofocus
+                ></textarea>
+                <button type="submit" class="studio-send-btn" id="studio-send-btn">
+                    →
+                </button>
+            </form>
+        </div>
+
+        <!-- Hidden response target for HTMX -->
+        <div id="studio-response-target" style="display:none;"></div>
+    </main>
+
+    <!-- Right Panel: Execution Summary -->
+    <aside class="studio-execution" id="studio-execution-panel">
+        <div class="studio-execution-header">
+            <span>Execution</span>
+            <button class="studio-exec-clear" onclick="clearExecutionSummary()" title="Clear">✕</button>
+        </div>
+        <div id="studio-execution-summary">
+            <div class="studio-execution-empty">
+                No execution yet. Send a message to see how it's processed.
+            </div>
+        </div>
+        <div id="studio-execution-details" style="display:none;"></div>
+    </aside>
+
+</div> {# .studio-container #}
+
+<script src="/static/js/studio.js"></script>
+{% endblock %}

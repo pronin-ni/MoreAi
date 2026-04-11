@@ -5,6 +5,7 @@ ConfigManager handles storage/validation/persistence.
 This module handles the actual side effects: toggling providers, updating semaphores, etc.
 """
 
+import time
 from dataclasses import dataclass
 
 from app.admin.config_manager import RuntimeOverrides
@@ -58,6 +59,7 @@ class RuntimeConfigApplier:
 
     async def apply(self, overrides: RuntimeOverrides) -> ApplyResult:
         """Apply all overrides. If any component fails, rollback applied changes."""
+        started = time.monotonic()
         results: dict[str, ComponentApplyResult] = {}
         applied_components: list[str] = []
 
@@ -71,6 +73,7 @@ class RuntimeConfigApplier:
                 pass  # continue but mark
             elif result.status == "failed":
                 await self._rollback_components(applied_components, overrides)
+                self._record_config_apply(overrides, "apply_failed", started, results, result.error)
                 return ApplyResult(
                     status="apply_failed",
                     component="providers",
@@ -85,6 +88,7 @@ class RuntimeConfigApplier:
                 applied_components.append("models")
             elif result.status == "failed":
                 await self._rollback_components(applied_components, overrides)
+                self._record_config_apply(overrides, "apply_failed", started, results, result.error)
                 return ApplyResult(
                     status="apply_failed",
                     component="models",
@@ -99,6 +103,7 @@ class RuntimeConfigApplier:
                 applied_components.append("routing")
             elif result.status == "failed":
                 await self._rollback_components(applied_components, overrides)
+                self._record_config_apply(overrides, "apply_failed", started, results, result.error)
                 return ApplyResult(
                     status="apply_failed",
                     component="routing",
@@ -106,17 +111,47 @@ class RuntimeConfigApplier:
                     results=results,
                 )
 
+            self._record_config_apply(overrides, "success", started, results)
             return ApplyResult(status="applied", results=results)
 
         except Exception as e:
             await self._rollback_components(applied_components, overrides)
             logger.exception("Unexpected error during config apply")
+            self._record_config_apply(overrides, "apply_failed", started, results, str(e))
             return ApplyResult(
                 status="apply_failed",
                 component="unexpected",
                 error=str(e),
                 results=results,
             )
+
+    def _record_config_apply(
+        self,
+        overrides: RuntimeOverrides,
+        status: str,
+        started: float,
+        results: dict,
+        error: str | None = None,
+    ) -> None:
+        """Record config apply outcome for metrics and diagnostics."""
+        try:
+            from app.core.metrics import config_apply_total, config_apply_duration
+            from app.core.diagnostics import record_config_apply
+
+            elapsed = time.monotonic() - started
+            config_apply_total.inc(result=status)
+            config_apply_duration.observe(elapsed)
+
+            component_status = {k: v.status for k, v in results.items()}
+            record_config_apply(
+                version=overrides.version,
+                status=status,
+                duration_seconds=elapsed,
+                components=component_status,
+                error=error,
+            )
+        except Exception:
+            pass
 
     # ── Component-specific apply ──
 
@@ -143,12 +178,16 @@ class RuntimeConfigApplier:
                                 await provider.initialize()
                                 details[pid] = "reinitialized"
                 elif pid in ("qwen", "glm", "chatgpt", "yandex", "kimi", "deepseek"):
-                    # Browser provider: update circuit breaker / concurrency
+                    # Browser provider: concurrency limit update on dispatcher
                     if self.browser_dispatcher and override.concurrency_limit is not None:
-                        self.browser_dispatcher.set_concurrency_limit(
-                            pid, override.concurrency_limit
-                        )
-                        details[pid] = f"concurrency={override.concurrency_limit}"
+                        try:
+                            self.browser_dispatcher.set_concurrency_limit(
+                                pid, override.concurrency_limit
+                            )
+                            details[pid] = f"concurrency={override.concurrency_limit}"
+                        except AttributeError:
+                            # Dispatcher doesn't support live concurrency changes
+                            details[pid] = f"concurrency={override.concurrency_limit} (restart_required)"
                 else:
                     # API provider
                     if self.api_registry:

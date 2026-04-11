@@ -73,6 +73,23 @@ class GoogleAuthSettings(BaseSettings):
     post_login_wait_seconds: int = Field(default=10, ge=1)
 
 
+class ReconSettings(BaseSettings):
+    """Auto-recon recovery configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="RECON_", extra="ignore")
+
+    enabled: bool = Field(default=True, description="Enable auto-recon recovery")
+    max_time_ms: float = Field(default=3000.0, ge=500, le=10000, description="Max time budget for recon recovery")
+    max_dom_scans: int = Field(default=1, ge=0, le=3, description="Max HealingEngine DOM scans")
+    max_page_reloads: int = Field(default=1, ge=0, le=2, description="Max soft page reloads")
+    max_replay_attempts: int = Field(default=1, ge=0, le=3, description="Max action replay attempts")
+    candidate_limit: int = Field(default=10, ge=1, le=50, description="Max candidates per role scan")
+    allow_soft_reload: bool = Field(default=True, description="Allow soft page reload during recon")
+    allow_new_chat_recovery: bool = Field(default=True, description="Allow start_new_chat as recovery action")
+    abort_on_login_wall: bool = Field(default=True, description="Abort recon immediately on login wall")
+    abort_on_modal_blockers: bool = Field(default=True, description="Abort recon if modal/dialog overlay detected")
+
+
 class OpenCodeSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="OPENCODE_", extra="ignore")
 
@@ -102,6 +119,17 @@ class OpenCodeSettings(BaseSettings):
     working_dir: str | None = Field(default=None, description="Working directory for the subprocess")
     extra_env: dict[str, str] = Field(default_factory=dict, description="Additional environment variables for the subprocess")
     required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
+
+
+class PipelineSettings(BaseSettings):
+    """Pipeline orchestration configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="PIPELINE_", extra="ignore")
+
+    enabled: bool = Field(default=True, description="Enable pipeline execution")
+    max_stages: int = Field(default=3, ge=1, le=5, description="Max stages per pipeline")
+    max_total_time_ms: int = Field(default=180_000, ge=10_000, description="Max total pipeline execution time")
+    max_stage_retries: int = Field(default=1, ge=0, le=3, description="Default max retries per stage")
 
 
 class Settings(BaseSettings):
@@ -155,6 +183,8 @@ class Settings(BaseSettings):
     deepseek: DeepseekSettings = Field(default_factory=DeepseekSettings)
     opencode: OpenCodeSettings = Field(default_factory=OpenCodeSettings)
     google_auth: GoogleAuthSettings = Field(default_factory=GoogleAuthSettings)
+    recon: ReconSettings = Field(default_factory=ReconSettings)
+    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -176,6 +206,10 @@ class Settings(BaseSettings):
             object.__setattr__(self, "opencode", OpenCodeSettings())
         if "google_auth" not in kwargs:
             object.__setattr__(self, "google_auth", GoogleAuthSettings())
+        if "recon" not in kwargs:
+            object.__setattr__(self, "recon", ReconSettings())
+        if "pipeline" not in kwargs:
+            object.__setattr__(self, "pipeline", PipelineSettings())
 
 
 settings = Settings()

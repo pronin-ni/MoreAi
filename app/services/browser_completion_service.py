@@ -1,6 +1,10 @@
 from app.browser.execution.dispatcher import browser_dispatcher
 from app.browser.registry import registry as browser_registry
 from app.core.logging import get_logger
+from app.core.metrics import (
+    browser_execution_seconds,
+    queue_wait_seconds,
+)
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
 from app.utils.message_parser import extract_last_user_message
 from app.utils.openai_mapper import create_completion_response
@@ -30,6 +34,14 @@ class BrowserCompletionService:
             execution_seconds=result.execution_seconds,
             retry_count=result.retry_count,
         )
+
+        # Record metrics
+        queue_wait_seconds.observe(result.queue_wait_seconds)
+        browser_execution_seconds.observe(
+            result.execution_seconds,
+            provider=provider_class.provider_id,
+        )
+
         return create_completion_response(model=canonical_model_id, content=result.content)
 
 

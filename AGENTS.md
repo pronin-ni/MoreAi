@@ -79,6 +79,22 @@ Repository guide for coding agents working in `MoreAi`.
 - `app/browser/providers/*.py`: provider-specific Playwright logic.
 - `app/core/{config,errors,logging}.py`: settings, exceptions, and logging.
 - `app/schemas/openai.py`: request/response models.
+- `app/pipeline/`: Chain-of-Providers pipeline orchestration subsystem.
+  - `app/pipeline/types.py`: Core types (PipelineDefinition, PipelineStage, PipelineContext, StageResult, PipelineTrace, PipelineRegistry).
+  - `app/pipeline/builtin_pipelines.py`: Built-in pipeline templates (generate-review-refine, generate-critique-regenerate, draft-verify-finalize).
+  - `app/pipeline/executor.py`: PipelineExecutor — sequential stage orchestration with guardrails.
+  - `app/pipeline/prompt_builder.py`: Controlled prompt handoff between stages.
+  - `app/pipeline/diagnostics.py`: Execution trace storage and querying.
+- `app/intelligence/`: Model/provider intelligence for pipeline stage selection.
+  - `app/intelligence/types.py`: Core types (ModelRuntimeStats, StageSuitability, CapabilityTag, SelectionPolicy, CandidateRanking, SelectionTrace).
+  - `app/intelligence/stats.py`: StatsAggregator — combines analytics, health, and circuit breaker data.
+  - `app/intelligence/suitability.py`: SuitabilityScorer — stage-specific suitability scoring with proxy metrics.
+  - `app/intelligence/tags.py`: CapabilityRegistry — semantic tags (fast, stable, review_strong, etc.).
+  - `app/intelligence/selection.py`: ModelSelector — candidate ranking, selection, and bounded fallback.
+- `app/pipeline/observability/`: Pipeline observability and admin control plane.
+  - `app/pipeline/observability/trace_model.py`: Enhanced trace models (PipelineExecutionSummary, StageExecutionSummary, StageSelectionExplain, FailureAnalysis, CandidateExplain).
+  - `app/pipeline/observability/store.py`: PipelineExecutionStore — bounded recent execution history with filtering.
+  - `app/pipeline/observability/recorder.py`: ObservabilityRecorder — converts raw traces to bounded summaries with explainability.
 
 ## Formatting
 
@@ -159,6 +175,63 @@ Repository guide for coding agents working in `MoreAi`.
 - Use `pytest.raises(...)` for exception assertions.
 - For HTTP routes, use `fastapi.testclient.TestClient`.
 - Mock service boundaries instead of driving real browsers unless the task explicitly requires browser-level testing.
+
+## Pipeline Orchestration Guidelines
+
+- Pipelines are data-driven: define stages declaratively in `PipelineDefinition`.
+- Use `PipelineExecutor` for sequential stage execution — do not bypass the executor.
+- Each stage receives only what its `InputMapping` explicitly allows (controlled handoff).
+- Prompt templates use `{original_request}`, `{previous_output}`, `{draft_output}`, `{review_output}`, `{critique_notes}`, `{verify_output}` variables.
+- Pipelines are exposed as OpenAI-compatible model IDs: `pipeline/<pipeline_id>`.
+- Guardrails are enforced at two levels:
+  - Pydantic: max 3 stages in `PipelineDefinition.stages`.
+  - Executor: secondary validation for stage count, no nested pipelines, total timeout.
+- Failure policies per stage: `fail_all` (default), `skip`, `fallback`.
+- Pipeline traces are stored in `pipeline_diagnostics` and accessible via admin API.
+- New pipelines should be added to `app/pipeline/builtin_pipelines.py` and registered via `register_builtin_pipelines()`.
+- Config settings use `PIPELINE_` env var prefix.
+
+## Model Intelligence Guidelines
+
+- Pipeline stages can use `selection_policy` for data-driven model selection instead of hard-coded `target_model`.
+- SelectionPolicy fields: `preferred_models`, `preferred_tags`, `avoid_tags`, `min_availability`, `max_latency_s`, `avoid_same_model_as_previous`, `fallback_mode`, `allowed_transports`, `excluded_models`, `max_fallback_attempts`.
+- Candidate ranking uses weighted composite score: availability (25%) + latency (15%) + stability (15%) + stage_suitability (30%) + tag_bonus (10%) + admin_bonus (5%).
+- Availability score = success_rate * 0.5 + health_score * 0.3 + circuit_penalty * 0.2.
+- Stage suitability uses role-specific weights (e.g., review role emphasizes stability + reasoning tags).
+- Capability tags are semantic labels: `fast`, `stable`, `creative`, `review_strong`, `reasoning_strong`, `cheap`, `experimental`, `browser_only`, `api_preferred`, `long_context`, `code_strong`, `multilingual`.
+- Builtin tag assignments live in `app/intelligence/tags.py`.
+- Fallback is bounded: max `max_fallback_attempts` (default 2) per stage.
+- Selection traces are stored in pipeline context metadata for full traceability.
+- If ranking data is insufficient (no analytics history), defaults to reasonable values (0.5 stability, 1.0 availability/latency).
+- Admin diagnostics at `/admin/intelligence/models`, `/admin/intelligence/tags`, `/admin/intelligence/ranking/{role}`.
+
+## Pipeline Observability Guidelines
+
+- Pipeline executions are recorded as bounded `PipelineExecutionSummary` (not raw traces) to control memory.
+- Execution summaries are stored in `PipelineExecutionStore` (default: 100 max global, 30 per pipeline).
+- Stage summaries include bounded input/output summaries (500 chars max), selection explainability, budget info.
+- Selection explainability records: candidates considered, excluded (with reasons), viable count, fallback chain.
+- Failure analysis classifies root causes: `timeout`, `circuit_breaker`, `no_viable_candidates`, `model_unavailable`, `selection_failed`, `execution_error`.
+- Budget tracking: each stage shows `budget_remaining_ms`, pipeline shows `budget_consumed_pct`.
+- Admin UI: Pipelines tab at `/admin` shows overview cards, definitions table, recent executions table, trace modal with stage timeline.
+- Admin API endpoints:
+  - `GET /admin/pipelines/executions?pipeline_id=&status=&limit=` — filtered execution list
+  - `GET /admin/pipelines/executions/{execution_id}` — detailed trace with failure analysis
+  - `GET /admin/pipelines/executions/store/stats` — store statistics
+  - `POST /admin/pipelines/{pipeline_id}/run-test` — diagnostic test execution
+  - `POST /admin/pipelines/{pipeline_id}/run-sandbox` — dry-run selection without provider calls
+  - `GET /admin/pipelines/stage-performance` — per-model stage performance stats
+  - `GET /admin/pipelines/stage-performance/trends` — top performers, cold-start models, fallback-heavy models
+  - `GET /admin/pipelines/stage-scoring?stage_role=generate` — full scoring breakdown per model
+  - `GET /admin/pipelines/executions/persistent` — executions from SQLite persistent store
+- Metrics: `moreai_pipeline_partial_total`, `moreai_pipeline_stage_fallback_total`, `moreai_pipeline_rank_fallback_reason_total`.
+- Logs include: `pipeline_observability_recorded` with execution_id, status, duration, stages_completed, fallbacks.
+- Do NOT store full raw stage outputs — use bounded summaries only.
+- Trace modal in admin UI shows: stage timeline, model/provider per stage, duration, fallback/retry badges, budget remaining, failure analysis panel.
+- **Adaptive fallback**: On stage failure, the executor classifies the failure reason (`timeout`, `circuit_breaker`, `service_unavailable`, `model_not_found`, `provider_internal_error`, `execution_error`), computes a bounded score penalty, and re-ranks remaining candidates before picking the next best.
+- **Dynamic suitability**: Stage performance data (rolling success rate, fallback rate) is blended with static priors. Cold-start models (< 5 samples) use mostly static scoring (90% static, 10% dynamic). Full data (100+ samples) shifts to 70% dynamic influence.
+- **Scoring formula**: `final = base_static + dynamic_adjustment - failure_penalty`, where base_static uses role-weighted availability/latency/stability/tag_bonus, dynamic is blended from rolling performance data, and penalty is failure-type-specific (0.10-0.30).
+- **Traceability**: Every candidate ranking includes `scoring_breakdown` with base_static_score, dynamic_adjustment, failure_penalty, performance data (success_rate, fallback_rate, sample_count, data_confidence).
 
 ## When Editing
 

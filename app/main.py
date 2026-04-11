@@ -10,7 +10,9 @@ import app.browser.providers  # noqa: F401
 from app.admin.config_manager import config_manager
 from app.admin.observer import observer
 from app.admin.router import router as admin_router
+from app.api.rate_limit import RateLimitMiddleware
 from app.api.routes_openai import router as openai_router
+from app.api.routes_studio import router as studio_router
 from app.api.routes_ui import router as ui_router
 from app.browser.execution.dispatcher import browser_dispatcher
 from app.browser.registry import registry as browser_registry
@@ -50,13 +52,53 @@ async def lifespan(app: FastAPI):
     # Start admin observer (background task for config change propagation)
     await observer.start()
 
+    # Start webhook dispatcher
+    from app.services.webhooks import webhook_dispatcher
+    await webhook_dispatcher.start()
+    logger.info("Webhook dispatcher started")
+
+    # Start proactive baseline refresher
+    from app.browser.dom.refresh import baseline_refresher
+    await baseline_refresher.start()
+    logger.info("Baseline refresher started")
+
+    # Initialize pipeline subsystem
+    from app.pipeline.executor import initialize_pipelines
+    initialize_pipelines()
+    logger.info("Pipeline subsystem initialized")
+
+    # Initialize intelligence subsystem (capability tags)
+    from app.intelligence.tags import capability_registry
+    capability_registry.initialize()
+    logger.info("Model intelligence subsystem initialized")
+
+    # Start scoring snapshot scheduler (background thread)
+    from app.pipeline.observability.scoring_trends import snapshot_scheduler
+    snapshot_scheduler.start()
+    logger.info("Scoring snapshot scheduler started")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
 
+    # Stop baseline refresher
+    from app.browser.dom.refresh import baseline_refresher
+    await baseline_refresher.stop()
+    logger.info("Baseline refresher stopped")
+
+    # Stop webhook dispatcher
+    from app.services.webhooks import webhook_dispatcher
+    await webhook_dispatcher.stop()
+    logger.info("Webhook dispatcher stopped")
+
     # Stop admin observer
     await observer.stop()
     logger.info("Admin observer stopped")
+
+    # Stop scoring snapshot scheduler
+    from app.pipeline.observability.scoring_trends import snapshot_scheduler
+    snapshot_scheduler.stop()
+    logger.info("Scoring snapshot scheduler stopped")
 
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")
@@ -83,6 +125,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting middleware (must be after CORS)
+app.add_middleware(
+    RateLimitMiddleware,
+    enabled=True,
+    default_rpm=60,
+    default_burst=10,
+)
+
 
 @app.exception_handler(APIError)
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
@@ -98,6 +148,7 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
 
 app.include_router(openai_router)
 app.include_router(ui_router)
+app.include_router(studio_router)
 app.include_router(admin_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 

@@ -33,7 +33,8 @@ class BrowserJob:
     request: BrowserExecutionRequest
     result_future: asyncio.Future[BrowserJobResult]
     sequence: int
-    enqueued_at: float = field(default_factory=time.monotonic)
+    # Use event loop clock for consistent time comparison with _run_job
+    enqueued_at: float = field(default_factory=lambda: asyncio.get_running_loop().time())
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     started_at: float | None = None
     retry_count: int = 0

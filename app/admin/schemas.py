@@ -164,3 +164,167 @@ class SystemStatusView(BaseModel):
     model_count: int
     agent_model_count: int
     last_config_error: str | None
+
+
+# ── Sandbox ──
+
+
+class SandboxRunRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=10000)
+    model_id: str
+    provider_id: str | None = None
+    max_tokens: int = Field(default=4096, ge=1, le=32000)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+
+
+class SandboxRunResponse(BaseModel):
+    model_id: str
+    provider_id: str
+    transport: str
+    status: str
+    content: str | None = None
+    latency_seconds: float = 0.0
+    error: str | None = None
+    error_type: str | None = None
+    route_info: dict[str, Any] = {}
+
+
+class SandboxCompareRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=10000)
+    model_ids: list[str] = Field(..., min_length=1, max_length=10)
+    max_tokens: int = Field(default=4096, ge=1, le=32000)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    parallel: bool = True
+
+
+class SandboxCompareResponse(BaseModel):
+    prompt: str
+    results: list[SandboxRunResponse]
+    total_duration_seconds: float
+    fastest_provider: str | None = None
+    successful_count: int
+    failed_count: int
+
+
+# ── Analytics ──
+
+
+class AnalyticsUsageView(BaseModel):
+    top_models: list[dict[str, Any]]
+    top_providers: list[dict[str, Any]]
+    error_summary: list[dict[str, Any]]
+    fallback_summary: dict[str, Any]
+    activity_timeline: list[dict[str, Any]]
+
+
+# ── Canary ──
+
+
+class CanaryRegisterRequest(BaseModel):
+    model_id: str
+    provider_id: str
+    status: str = Field(default="draft")  # draft, canary, rollout, ga, deprecated
+    traffic_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
+    error_threshold: float = Field(default=0.1, ge=0.0, le=1.0)
+    notes: str = ""
+
+
+class CanaryUpdateRequest(BaseModel):
+    status: str | None = None
+    traffic_percentage: float | None = Field(None, ge=0.0, le=100.0)
+    error_threshold: float | None = Field(None, ge=0.0, le=1.0)
+    notes: str | None = None
+
+
+class CanaryView(BaseModel):
+    model_id: str
+    provider_id: str
+    status: str
+    traffic_percentage: float
+    error_threshold: float
+    started_at: float
+    notes: str
+    is_active: bool
+
+
+# ── API Keys ──
+
+
+class APIKeyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    role: str = Field(default="user")
+    quotas: dict[str, Any] = {}
+    allowed_models: list[str] = []
+    tenant_id: str = ""
+    expires_at: float | None = None
+    metadata: dict[str, Any] = {}
+
+
+class APIKeyView(BaseModel):
+    key_id: str
+    name: str
+    role: str
+    quotas: dict[str, Any] = {}
+    allowed_models: list[str] = []
+    tenant_id: str
+    created_at: float
+    expires_at: float | None = None
+    is_active: bool
+    last_used_at: float | None = None
+    metadata: dict[str, Any] = {}
+
+
+class APIKeySecretResponse(BaseModel):
+    key_info: APIKeyView
+    secret: str  # Only shown once!
+
+
+# ── Tenants ──
+
+
+class TenantCreateRequest(BaseModel):
+    tenant_id: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=100)
+    allowed_models: list[str] = []
+    hidden_models: list[str] = []
+    budget_monthly_tokens: int = 0
+    budget_monthly_requests: int = 0
+    metadata: dict[str, Any] = {}
+
+
+class TenantUpdateRequest(BaseModel):
+    name: str | None = None
+    allowed_models: list[str] | None = None
+    hidden_models: list[str] | None = None
+    budget_monthly_tokens: int | None = None
+    budget_monthly_requests: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class TenantView(BaseModel):
+    tenant_id: str
+    name: str
+    allowed_models: list[str]
+    hidden_models: list[str]
+    budget_monthly_tokens: int
+    budget_monthly_requests: int
+    created_at: float
+    metadata: dict[str, Any]
+
+
+# ── Webhooks ──
+
+
+class WebhookConfigRequest(BaseModel):
+    url: str = Field(..., min_length=1)
+    events: list[str] = []
+    secret: str | None = None
+    max_retries: int = 3
+    timeout_seconds: float = 10.0
+
+
+class WebhookConfigView(BaseModel):
+    url: str
+    events: list[str]
+    max_retries: int
+    timeout_seconds: float

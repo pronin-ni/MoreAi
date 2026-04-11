@@ -1,0 +1,123 @@
+{# Execution Details — stage-by-stage breakdown for /studio right panel #}
+
+<div class="studio-details">
+    <div class="studio-details-header">
+        <span class="studio-details-title">Execution Details</span>
+        <button class="studio-details-close" onclick="toggleExecutionDetails()" title="Close">✕</button>
+    </div>
+
+    {% if error %}
+    <div class="studio-details-error">
+        <span>{{ error }}</span>
+        <button class="studio-details-retry" onclick="loadExecutionDetails('{{ execution_id }}')">Retry</button>
+    </div>
+    {% elif not stages %}
+    <div class="studio-details-empty">
+        No detailed trace available for this execution.
+    </div>
+    {% else %}
+
+    {# Verdict badge #}
+    {% if verdict %}
+    <div class="studio-details-verdict">
+        <span class="studio-details-verdict-label">{{ verdict.label }}</span>
+        <span class="studio-details-verdict-msg">{{ verdict.message }}</span>
+    </div>
+    {% endif %}
+
+    {# Stage cards #}
+    {% for stage in stages %}
+    <div class="studio-details-stage">
+        <div class="studio-details-stage-header">
+            <span class="studio-details-stage-number">{{ loop.index }}</span>
+            <span class="studio-details-stage-role">{{ stage.role_label }}</span>
+            <span class="studio-details-stage-status {{ stage.status }}">{{ stage.status_label }}</span>
+            {% if stage.fallback_count > 0 %}
+            <span class="studio-details-fallback-badge">Fallback used</span>
+            {% endif %}
+            {% if stage.retry_count > 0 %}
+            <span class="studio-details-retry-badge">{{ stage.retry_count }} retry</span>
+            {% endif %}
+        </div>
+
+        <div class="studio-details-stage-body">
+            <div class="studio-details-explanation">{{ stage.explanation }}</div>
+
+            <div class="studio-details-stage-meta">
+                <div class="studio-details-meta-item">
+                    <span class="studio-details-meta-label">Model</span>
+                    <span class="studio-details-meta-value">{{ stage.model }}</span>
+                </div>
+                {% if stage.transport %}
+                <div class="studio-details-meta-item">
+                    <span class="studio-details-meta-label">Transport</span>
+                    <span class="studio-details-meta-value">{{ stage.transport }}</span>
+                </div>
+                {% endif %}
+                <div class="studio-details-meta-item">
+                    <span class="studio-details-meta-label">Duration</span>
+                    <span class="studio-details-meta-value">
+                        {% if stage.duration_ms >= 1000 %}
+                        {{ (stage.duration_ms / 1000) | round(1) }}s
+                        {% else %}
+                        {{ stage.duration_ms | round(0) }}ms
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+
+            {# Fallback chain #}
+            {% if stage.fallbacks %}
+            <div class="studio-details-fallbacks">
+                <div class="studio-details-fallbacks-label">Fallback chain:</div>
+                {% for fb in stage.fallbacks %}
+                <div class="studio-details-fallback-item">
+                    <span class="studio-details-fallback-from">{{ fb.from_model }}</span>
+                    <span class="studio-details-fallback-arrow">→</span>
+                    <span class="studio-details-fallback-to">{{ fb.to_model or "next" }}</span>
+                    <span class="studio-details-fallback-reason">({{ fb.reason }})</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {# Quality #}
+            {% if stage.quality_label %}
+            <div class="studio-details-quality">
+                <span class="studio-details-quality-label">{{ stage.quality_label }}</span>
+                {% if stage.quality_score %}
+                <span class="studio-details-quality-score">{{ stage.quality_score }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+
+    {# Cross-stage summary #}
+    {% if cross_stage %}
+    <div class="studio-details-cross-stage">
+        <div class="studio-details-cross-stage-title">Cross-stage analysis</div>
+        {% if cross_stage.generate %}
+        <div class="studio-details-cross-item">
+            <span class="studio-details-cross-label">Draft quality:</span>
+            <span class="studio-details-cross-value">{{ cross_stage.generate.summary }}</span>
+        </div>
+        {% endif %}
+        {% if cross_stage.review %}
+        <div class="studio-details-cross-item">
+            <span class="studio-details-cross-label">Review impact:</span>
+            <span class="studio-details-cross-value">{{ cross_stage.review.summary }}</span>
+        </div>
+        {% endif %}
+        {% if cross_stage.refine %}
+        <div class="studio-details-cross-item">
+            <span class="studio-details-cross-label">Refinement:</span>
+            <span class="studio-details-cross-value">{{ cross_stage.refine.summary }}</span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% endif %}
+</div>

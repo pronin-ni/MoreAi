@@ -99,5 +99,9 @@ class BrowserTaskDispatcher:
     def diagnostics(self) -> dict:
         return self._pool.health_snapshot().to_dict()
 
+    def get_health_snapshot(self):
+        """Return health snapshot object for health checks."""
+        return self._pool.health_snapshot()
+
 
 browser_dispatcher = BrowserTaskDispatcher()

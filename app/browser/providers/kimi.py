@@ -1,14 +1,16 @@
 import asyncio
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
-from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeout
+from playwright.async_api import Locator, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.browser.base import BrowserProvider
+from app.browser.capabilities import ProviderCapabilities
+from app.browser.debug_artifacts import save_debug_artifacts
+from app.browser.page_helpers import first_visible
+from app.browser.response_waiter import ResponseWaitConfig, ResponseWaiter
+from app.browser.selectors import SelectorDef
 from app.core.config import settings
 from app.core.errors import (
-    AssistantMessageNotFoundError,
     BrowserError,
     GenerationTimeoutError,
     MessageInputNotFoundError,
@@ -29,38 +31,51 @@ class KimiProvider(BrowserProvider):
     auth_provider = "google"
     requires_auth = True
 
-    def __init__(self, page: Page, request_id: Optional[str] = None, provider_config: Optional[dict] = None):
+    def __init__(self, page: Page, request_id: str | None = None, provider_config: dict | None = None):
         super().__init__(page, request_id=request_id, provider_config=provider_config)
         self._last_user_message = ""
 
     @classmethod
+    def get_capabilities(cls) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider_id=cls.provider_id,
+            model_name=cls.model_name,
+            display_name=cls.display_name,
+            target_url=cls.target_url,
+            requires_auth=True,
+            auth_mode="google",
+            send_mechanism="button",
+            response_strategy="generation_flag",
+            input_selectors_hint=(
+                "role=textbox",
+                "#chat-box .chat-input-editor",
+            ),
+            send_selectors_hint=(
+                ".send-button-container:not(.disabled)",
+                ".send-icon",
+            ),
+            login_wall_selectors_hint=(
+                "text=Continue with Google",
+                "text=Chat with Kimi for Free",
+            ),
+            default_stable_threshold=2,
+        )
+
+    @classmethod
     def recon_hints(cls) -> dict[str, list[str] | str | bool | None]:
+        caps = cls.get_capabilities()
         return {
-            "provider_id": cls.provider_id,
-            "model_name": cls.model_name,
-            "display_name": cls.display_name,
-            "target_url": cls.target_url,
-            "requires_auth": cls.requires_auth,
-            "auth_provider": cls.auth_provider,
+            **super().recon_hints(),
             "new_chat": [
                 'a.new-chat-btn[href="/?chat_enter_method=new_chat"]',
                 "role=link[name='New Chat']",
             ],
-            "input": [
-                "role=textbox",
-                "#chat-box .chat-input-editor",
-                ".chat-input-editor",
-            ],
-            "send": [
-                ".send-button-container:not(.disabled)",
-                ".send-button-container",
-            ],
-            "login_wall": [
-                "text=Continue with Google",
-                "text=Chat with Kimi for Free",
-                "text=Phone number",
-            ],
+            "input": list(caps.input_selectors_hint),
+            "send": list(caps.send_selectors_hint),
+            "login_wall": list(caps.login_wall_selectors_hint),
         }
+
+    # -- Navigation --
 
     async def navigate_to_chat(self) -> None:
         url = self.provider_config.get("url") or self.target_url
@@ -82,12 +97,24 @@ class KimiProvider(BrowserProvider):
         await self._dismiss_promotions()
         await self._wait_for_ready()
 
+    # -- Send --
+
     async def send_message(self, text: str) -> None:
         self._last_user_message = text.strip()
         if await self.detect_login_required():
             raise BrowserError("Kimi requires login before sending a message")
 
         input_locator = await self._find_message_input()
+        if input_locator is None:
+            # Self-healing fallback
+            selectors = [
+                SelectorDef.role("textbox", first=True, description="role=textbox"),
+                SelectorDef.css("#chat-box .chat-input-editor", first=True, description="#chat-box .chat-input-editor"),
+                SelectorDef.css(".chat-input-editor", first=True, description=".chat-input-editor"),
+                SelectorDef.raw('[contenteditable="true"]', first=True, description='[contenteditable]'),
+            ]
+            input_locator = await self._try_healing_input(selectors)
+
         if input_locator is None:
             raise MessageInputNotFoundError("Kimi message input not found")
 
@@ -100,46 +127,169 @@ class KimiProvider(BrowserProvider):
                 details={"provider_id": self.provider_id, "auth_provider": self.auth_provider},
             )
 
+    async def _find_message_input(self, timeout_ms: int = 5_000) -> Locator | None:
+        selectors = [
+            SelectorDef.role("textbox", first=True, description="role=textbox"),
+            SelectorDef.css("#chat-box .chat-input-editor", first=True, description="#chat-box .chat-input-editor"),
+            SelectorDef.css(".chat-input-editor", first=True, description=".chat-input-editor"),
+            SelectorDef.raw('[contenteditable="true"]', first=True, description='[contenteditable]'),
+        ]
+        return await first_visible(
+            self.page, selectors, timeout_ms=timeout_ms,
+            telemetry_callback=self._record_selector,
+        )
+
+    async def _fill_editor(self, locator: Locator, text: str) -> None:
+        await locator.click(force=True)
+
+        try:
+            await locator.fill(text)
+            return
+        except Exception:
+            logger.debug("Kimi editor.fill failed, falling back to keyboard input")
+
+        try:
+            await self.page.keyboard.press("Meta+A")
+        except Exception:
+            pass
+        try:
+            await self.page.keyboard.press("Control+A")
+        except Exception:
+            pass
+        try:
+            await self.page.keyboard.press("Backspace")
+        except Exception:
+            pass
+
+        await self.page.keyboard.insert_text(text)
+
+    async def _click_send_button(self) -> None:
+        selectors = [
+            SelectorDef.css(".send-button-container:not(.disabled)", first=True, description="send:not(.disabled)"),
+            SelectorDef.css(".send-button-container", first=True, description="send-container"),
+        ]
+
+        for sel in selectors:
+            try:
+                loc = sel.resolve(self.page)
+                await loc.wait_for(state="visible", timeout=3_000)
+                class_name = await loc.get_attribute("class") or ""
+                if "disabled" in class_name:
+                    self._record_selector(sel.description or sel.value, False)
+                    continue
+                await loc.click(force=True)
+                self._record_selector(sel.description or sel.value, True)
+                return
+            except Exception:
+                self._record_selector(sel.description or sel.value, False)
+                continue
+
+        # Fallback: try to find send-icon's parent button
+        try:
+            icon = self.page.locator(".send-icon").first
+            await icon.wait_for(state="visible", timeout=2_000)
+            parent = icon.locator("xpath=..")
+            await parent.click(force=True)
+            self._record_selector("send-icon parent", True)
+            return
+        except Exception:
+            self._record_selector("send-icon parent", False)
+
+        # Self-healing fallback
+        healed = await self._try_healing_send(selectors)
+        if healed is not None:
+            try:
+                await healed.click(force=True)
+                return
+            except Exception:
+                pass
+
+        raise SendButtonNotFoundError("Kimi send button not found or stayed disabled")
+
+    async def _try_healing_input(self, tried_selectors: list[SelectorDef]) -> Locator | None:
+        """Attempt self-healing to find message input."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "message_input",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found message input",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
+
+    async def _try_healing_send(self, tried_selectors: list[SelectorDef]) -> Locator | None:
+        """Attempt self-healing to find send button."""
+        extra = [s.resolve(self.page) for s in tried_selectors]
+        try:
+            loc = await self.resolve_element(
+                "send_button",
+                extra_selectors=extra,
+                allow_healing=True,
+            )
+            logger.info(
+                "Self-healing found send button",
+                provider_id=self.provider_id,
+            )
+            return loc
+        except LookupError:
+            return None
+
+    # -- Response wait --
+
     async def wait_for_response(self, timeout: int = 120) -> str:
         if await self.detect_login_required():
             raise BrowserError("Kimi response flow is blocked by login")
 
         logger.info("Waiting for Kimi response", timeout=timeout)
-        start_time = asyncio.get_event_loop().time()
-        last_text = ""
-        stable_seconds = 0.0
+
+        waiter = ResponseWaiter(
+            provider_id=self.provider_id,
+            request_id=self._request_id,
+        )
+
         saw_generation_signal = False
 
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            if await self.detect_login_required():
-                raise BrowserError("Kimi response flow was interrupted by a login wall")
+        async def extract_fn() -> str:
+            return await self._extract_assistant_response()
 
-            is_generating = await self._is_generating()
-            saw_generation_signal = saw_generation_signal or is_generating
+        async def is_generating_fn() -> bool:
+            nonlocal saw_generation_signal
+            gen = await self._is_generating()
+            saw_generation_signal = saw_generation_signal or gen
+            return gen
 
-            response_text = await self._extract_assistant_response()
-            if response_text and response_text != last_text:
-                last_text = response_text
-                stable_seconds = 0.0
-            elif response_text and response_text == last_text:
-                stable_seconds += 1.0
+        async def check_interrupted_fn() -> bool:
+            return await self.detect_login_required()
 
-            if last_text:
-                if saw_generation_signal and not is_generating and stable_seconds >= 2.0:
-                    return last_text
-                if not saw_generation_signal and stable_seconds >= 3.0:
-                    return last_text
+        try:
+            return await waiter.wait(
+                config=ResponseWaitConfig(
+                    timeout=timeout,
+                    stable_threshold=2,
+                    poll_interval=1.0,
+                    min_response_length=5,
+                ),
+                extract_fn=extract_fn,
+                is_generating_fn=is_generating_fn,
+                check_interrupted_fn=check_interrupted_fn,
+            )
+        except GenerationTimeoutError:
+            raise
+        except BrowserError:
+            raise
+        except Exception as exc:
+            raise GenerationTimeoutError(
+                f"Kimi response generation timed out after {timeout} seconds",
+                details={"timeout": timeout, "error": str(exc)},
+            )
 
-            await asyncio.sleep(1)
-
-        final_text = await self._extract_assistant_response()
-        if final_text:
-            return final_text
-
-        raise GenerationTimeoutError(
-            f"Kimi response generation timed out after {timeout} seconds",
-            details={"timeout": timeout},
-        )
+    # -- Auth --
 
     async def detect_login_required(self) -> bool:
         login_locators = [
@@ -185,30 +335,16 @@ class KimiProvider(BrowserProvider):
 
         raise BrowserError("Kimi did not become ready after Google login")
 
-    async def save_debug_artifacts(self, error_message: str) -> Optional[str]:
-        artifacts_dir = Path(settings.artifacts_dir)
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
+    # -- Debug artifacts (shared) --
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        request_id_part = self._request_id[:8] if self._request_id else "unknown"
+    async def save_debug_artifacts(self, error_message: str) -> str | None:
+        return await save_debug_artifacts(
+            self.page, error_message,
+            request_id=self._request_id,
+            prefix=self.provider_id,
+        )
 
-        screenshot_path = artifacts_dir / f"kimi_error_{request_id_part}_{timestamp}.png"
-        html_path = artifacts_dir / f"kimi_error_{request_id_part}_{timestamp}.html"
-
-        try:
-            await self.page.screenshot(path=str(screenshot_path), full_page=True)
-            logger.info("Saved Kimi screenshot", path=str(screenshot_path), error=error_message)
-        except Exception as exc:
-            logger.warning("Failed to save Kimi screenshot", error=str(exc))
-
-        try:
-            html_content = await self.page.content()
-            html_path.write_text(html_content, encoding="utf-8")
-            logger.info("Saved Kimi HTML", path=str(html_path), error=error_message)
-        except Exception as exc:
-            logger.warning("Failed to save Kimi HTML", error=str(exc))
-
-        return str(screenshot_path)
+    # -- Private helpers --
 
     async def _wait_for_ready(self) -> None:
         input_locator = await self._find_message_input(timeout_ms=10_000)
@@ -258,65 +394,6 @@ class KimiProvider(BrowserProvider):
             await asyncio.sleep(0.5)
 
         raise BrowserError("Kimi login modal did not appear")
-
-    async def _find_message_input(self, timeout_ms: int = 5_000) -> Locator | None:
-        candidates = [
-            lambda: self.page.get_by_role("textbox").first,
-            lambda: self.page.locator("#chat-box .chat-input-editor").first,
-            lambda: self.page.locator(".chat-input-editor").first,
-            lambda: self.page.locator('[contenteditable="true"]').first,
-        ]
-        for candidate in candidates:
-            try:
-                locator = candidate()
-                await locator.wait_for(state="visible", timeout=timeout_ms)
-                return locator
-            except Exception:
-                continue
-        return None
-
-    async def _fill_editor(self, locator: Locator, text: str) -> None:
-        await locator.click(force=True)
-
-        try:
-            await locator.fill(text)
-            return
-        except Exception:
-            logger.debug("Kimi editor.fill failed, falling back to keyboard input")
-
-        try:
-            await self.page.keyboard.press("Meta+A")
-        except Exception:
-            pass
-        try:
-            await self.page.keyboard.press("Control+A")
-        except Exception:
-            pass
-        try:
-            await self.page.keyboard.press("Backspace")
-        except Exception:
-            pass
-
-        await self.page.keyboard.insert_text(text)
-
-    async def _click_send_button(self) -> None:
-        candidates = [
-            lambda: self.page.locator(".send-button-container:not(.disabled)").first,
-            lambda: self.page.locator(".send-button-container").first,
-            lambda: self.page.locator('.send-icon').locator("xpath=..").first,
-        ]
-        for candidate in candidates:
-            try:
-                locator = candidate()
-                await locator.wait_for(state="visible", timeout=3_000)
-                class_name = await locator.get_attribute("class") or ""
-                if "disabled" in class_name:
-                    continue
-                await locator.click(force=True)
-                return
-            except Exception:
-                continue
-        raise SendButtonNotFoundError("Kimi send button not found or stayed disabled")
 
     async def _is_generating(self) -> bool:
         explicit_done_candidates = [
@@ -423,7 +500,7 @@ class KimiProvider(BrowserProvider):
 
         if self._last_user_message and self._last_user_message in pieces:
             last_user_index = max(i for i, piece in enumerate(pieces) if piece == self._last_user_message)
-            pieces = pieces[last_user_index + 1 :]
+            pieces = pieces[last_user_index + 1:]
 
         if not pieces:
             return ""
