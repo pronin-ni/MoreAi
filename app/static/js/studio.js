@@ -418,10 +418,13 @@
         if (!container) return;
 
         if (!messages || messages.length === 0) {
+            const modeLabel = STUDIO_MODES[mode]?.label || mode || 'Balanced';
+            const modeDesc = STUDIO_MODES[mode]?.isPipeline
+                ? 'This mode runs a multi-stage pipeline for higher quality results.'
+                : 'Fast single-model response.';
             container.innerHTML = `<div class="studio-welcome">
-                <div class="studio-welcome-title">MoreAI Studio</div>
-                <div class="studio-welcome-desc">Smart chat with pipeline-aware execution.
-                    Choose a mode and ask anything.</div>
+                <div class="studio-welcome-title">${modeLabel}</div>
+                <div class="studio-welcome-desc">${modeDesc}</div>
                 <div class="studio-welcome-modes">
                     ${Object.keys(STUDIO_MODES).map(k =>
                         `<span class="studio-welcome-chip" onclick="selectMode('${k}')">${STUDIO_MODES[k].label}</span>`

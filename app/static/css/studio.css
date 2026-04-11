@@ -1,10 +1,20 @@
 /* MoreAI Studio — Smart Chat Interface */
+/* Note: This CSS is ONLY loaded on /studio pages via {% block extra_head %}.
+   /ui (index.html) and /admin (admin.html) do NOT include this file. */
+
+/* ── Override base.html .app-container grid for studio only ── */
+/* studio.css loads AFTER style.css on /studio, so higher cascade wins. */
+.app-container {
+    display: block;
+    height: 100vh;
+    overflow: hidden;
+}
 
 /* ── Layout ── */
 
 .studio-container {
     display: grid;
-    grid-template-columns: 240px 1fr 280px;
+    grid-template-columns: 260px 1fr 260px;
     height: 100vh;
     gap: 0;
 }
@@ -31,15 +41,17 @@
     border-right: 1px solid var(--border-default, rgba(255,255,255,0.1));
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    padding: var(--spacing-md, 24px);
+    overflow: hidden;
+    padding: 16px;
+    min-height: 0;
 }
 
 .studio-sidebar-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: var(--spacing-lg, 48px);
+    margin-bottom: 12px;
+    flex-shrink: 0;
 }
 
 .studio-logo {
@@ -69,7 +81,10 @@
 .studio-modes {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    max-height: 45vh;
 }
 
 .studio-modes-label {
@@ -84,10 +99,10 @@
 .studio-mode {
     display: block;
     cursor: pointer;
-    padding: 8px 12px;
+    padding: 6px 8px;
     border: 1px solid transparent;
     border-radius: var(--radius-sm, 2px);
-    transition: all 0.15s;
+    transition: all 0.1s;
 }
 
 .studio-mode:hover {
@@ -95,8 +110,8 @@
 }
 
 .studio-mode.selected {
-    border-color: var(--text-primary, #ffffff);
-    background: var(--bg-surface, rgba(255,255,255,0.03));
+    border-color: rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.05);
 }
 
 .studio-mode input[type="radio"] {
@@ -116,14 +131,14 @@
 
 .studio-mode-label {
     font-family: var(--font-mono, monospace);
-    font-size: 0.8rem;
+    font-size: 0.7rem;
     font-weight: 600;
 }
 
 .studio-mode-badge {
     font-family: var(--font-mono, monospace);
-    font-size: 0.55rem;
-    padding: 1px 6px;
+    font-size: 0.5rem;
+    padding: 1px 5px;
     border-radius: var(--radius-sm, 2px);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -140,10 +155,10 @@
 }
 
 .studio-mode-desc {
-    font-size: 0.65rem;
-    color: var(--text-secondary, rgba(255,255,255,0.5));
-    margin-top: 2px;
-    line-height: 1.3;
+    font-size: 0.6rem;
+    color: var(--text-secondary, rgba(255,255,255,0.4));
+    margin-top: 1px;
+    line-height: 1.2;
 }
 
 /* ── Advanced ── */
@@ -208,6 +223,23 @@
     transition: border-color 0.2s;
 }
 
+.studio-new-chat {
+    margin: 0 0 8px 0;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: transparent;
+    border: 1px solid var(--border-default, rgba(255,255,255,0.1));
+    color: var(--text-primary, #ffffff);
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    flex-shrink: 0;
+    width: 100%;
+    text-align: left;
+}
+
 .studio-new-chat:hover {
     border-color: var(--text-primary, #ffffff);
 }
@@ -218,11 +250,12 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    margin: 12px 0;
-    max-height: 40vh;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    border-top: 1px solid var(--border-default, rgba(255,255,255,0.1));
-    padding-top: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-default, rgba(255,255,255,0.1));
 }
 
 .studio-chat-list-empty {
@@ -236,11 +269,12 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 8px 10px;
+    padding: 6px 8px;
     border: 1px solid transparent;
     border-radius: var(--radius-sm, 2px);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all 0.1s;
+    min-width: 0;
 }
 
 .studio-chat-item:hover {
@@ -249,13 +283,14 @@
 }
 
 .studio-chat-item.active {
-    border-color: var(--text-primary, #ffffff);
-    background: var(--bg-surface, rgba(255,255,255,0.05));
+    border-color: rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.05);
 }
 
 .studio-chat-item-content {
     flex: 1;
-    min-width: 0;  /* allow text truncation */
+    min-width: 0;
+    overflow: hidden;
 }
 
 .studio-chat-item-title {
@@ -266,11 +301,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     margin-bottom: 2px;
+    line-height: 1.3;
 }
 
 .studio-chat-item-meta {
     display: flex;
-    gap: 8px;
+    gap: 6px;
+    align-items: center;
 }
 
 .studio-chat-item-mode {
@@ -280,11 +317,13 @@
     color: #93c5fd;
     border-radius: var(--radius-sm, 2px);
     text-transform: uppercase;
+    flex-shrink: 0;
 }
 
 .studio-chat-item-time {
     font-size: 0.55rem;
     color: var(--text-secondary, rgba(255,255,255,0.4));
+    flex-shrink: 0;
 }
 
 .studio-chat-item-delete {
@@ -292,10 +331,12 @@
     border: none;
     color: var(--text-secondary, rgba(255,255,255,0.3));
     cursor: pointer;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     padding: 2px 4px;
+    line-height: 1;
+    flex-shrink: 0;
     opacity: 0;
-    transition: opacity 0.15s, color 0.15s;
+    transition: opacity 0.1s, color 0.1s;
 }
 
 .studio-chat-item:hover .studio-chat-item-delete {
@@ -313,6 +354,7 @@
     flex-direction: column;
     background: var(--bg-primary, #1f2228);
     overflow: hidden;
+    min-width: 0;
 }
 
 .studio-chat-header {
@@ -346,10 +388,11 @@
 .studio-messages {
     flex: 1;
     overflow-y: auto;
-    padding: var(--spacing-md, 24px);
+    padding: 24px;
     display: flex;
     flex-direction: column;
     gap: 16px;
+    min-height: 0;
 }
 
 .studio-message {
@@ -651,8 +694,10 @@
 /* ── Input Area ── */
 
 .studio-input-area {
-    padding: var(--spacing-md, 24px);
+    padding: 16px 24px;
     border-top: 1px solid var(--border-default, rgba(255,255,255,0.1));
+    flex-shrink: 0;
+    background: var(--bg-primary, #1f2228);
 }
 
 .studio-input-area form {
@@ -671,6 +716,7 @@
     padding: 12px 16px;
     border-radius: var(--radius-sm, 2px);
     resize: none;
+    min-height: 44px;
     max-height: 150px;
     line-height: 1.5;
 }
@@ -705,20 +751,23 @@
 .studio-execution {
     background: var(--bg-primary, #1f2228);
     border-left: 1px solid var(--border-default, rgba(255,255,255,0.1));
-    padding: var(--spacing-md, 24px);
+    padding: 16px;
     overflow-y: auto;
+    min-width: 0;
+    font-size: 0.75rem;
 }
 
 .studio-execution-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     font-family: var(--font-mono, monospace);
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: var(--text-secondary, rgba(255,255,255,0.6));
+    color: var(--text-secondary, rgba(255,255,255,0.5));
+    flex-shrink: 0;
 }
 
 .studio-exec-clear {
@@ -734,9 +783,24 @@
 }
 
 .studio-execution-empty {
-    font-size: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+    text-align: center;
+}
+
+.studio-exec-empty-icon {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+    opacity: 0.5;
+}
+
+.studio-exec-empty-text {
+    font-size: 0.7rem;
     color: var(--text-secondary, rgba(255,255,255,0.4));
-    line-height: 1.5;
+    line-height: 1.4;
 }
 
 /* ── Execution Result ── */

@@ -129,6 +129,7 @@ async def studio_page():
         browser_models=browser_models,
         api_models=api_models,
         agent_models=agent_models,
+        STUDIO_MODES={k: {"label": v["label"], "isPipeline": v["type"] == "pipeline"} for k, v in STUDIO_MODES.items()},
     ))
 
 

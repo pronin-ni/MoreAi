@@ -104,3 +104,5 @@ RoadMap
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+test-results
+playwright-report
