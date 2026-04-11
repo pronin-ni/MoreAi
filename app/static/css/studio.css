@@ -212,6 +212,100 @@
     border-color: var(--text-primary, #ffffff);
 }
 
+/* ── Chat List ── */
+
+.studio-chat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 12px 0;
+    max-height: 40vh;
+    overflow-y: auto;
+    border-top: 1px solid var(--border-default, rgba(255,255,255,0.1));
+    padding-top: 8px;
+}
+
+.studio-chat-list-empty {
+    font-size: 0.7rem;
+    color: var(--text-secondary, rgba(255,255,255,0.4));
+    padding: 16px 0;
+    text-align: center;
+}
+
+.studio-chat-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm, 2px);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.studio-chat-item:hover {
+    border-color: var(--border-default, rgba(255,255,255,0.1));
+    background: var(--bg-surface, rgba(255,255,255,0.02));
+}
+
+.studio-chat-item.active {
+    border-color: var(--text-primary, #ffffff);
+    background: var(--bg-surface, rgba(255,255,255,0.05));
+}
+
+.studio-chat-item-content {
+    flex: 1;
+    min-width: 0;  /* allow text truncation */
+}
+
+.studio-chat-item-title {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.7rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+
+.studio-chat-item-meta {
+    display: flex;
+    gap: 8px;
+}
+
+.studio-chat-item-mode {
+    font-size: 0.55rem;
+    padding: 1px 4px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #93c5fd;
+    border-radius: var(--radius-sm, 2px);
+    text-transform: uppercase;
+}
+
+.studio-chat-item-time {
+    font-size: 0.55rem;
+    color: var(--text-secondary, rgba(255,255,255,0.4));
+}
+
+.studio-chat-item-delete {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary, rgba(255,255,255,0.3));
+    cursor: pointer;
+    font-size: 0.7rem;
+    padding: 2px 4px;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+}
+
+.studio-chat-item:hover .studio-chat-item-delete {
+    opacity: 1;
+}
+
+.studio-chat-item-delete:hover {
+    color: #ef4444;
+}
+
 /* ── Chat Panel ── */
 
 .studio-chat {
@@ -398,6 +492,160 @@
 
 @keyframes studio-spin {
     to { transform: rotate(360deg); }
+}
+
+/* ── Progress Block ── */
+
+.studio-progress-block {
+    margin: 24px auto;
+    max-width: 600px;
+    padding: 20px 24px;
+    background: var(--bg-surface, rgba(255,255,255,0.03));
+    border: 1px solid var(--border-default, rgba(255,255,255,0.1));
+    border-radius: var(--radius-sm, 2px);
+}
+
+.studio-progress-mode-badge {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary, rgba(255,255,255,0.5));
+    margin-bottom: 8px;
+}
+
+.studio-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.studio-progress-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-default, rgba(255,255,255,0.1));
+    border-top-color: #22c55e;
+    border-radius: 50%;
+    animation: studio-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.studio-progress-body {
+    flex: 1;
+}
+
+.studio-progress-text {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-primary, #ffffff);
+    margin-bottom: 2px;
+}
+
+.studio-progress-sub {
+    font-size: 0.7rem;
+    color: var(--text-secondary, rgba(255,255,255,0.5));
+    line-height: 1.3;
+}
+
+.studio-progress-elapsed {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.7rem;
+    color: var(--text-secondary, rgba(255,255,255,0.4));
+    flex-shrink: 0;
+}
+
+.studio-progress-steps {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-default, rgba(255,255,255,0.05));
+}
+
+.studio-progress-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border-default, rgba(255,255,255,0.15));
+    transition: background 0.3s;
+}
+
+.studio-progress-dot.active {
+    background: #22c55e;
+}
+
+/* ── Progress Error ── */
+
+.studio-progress-error {
+    margin: 24px auto;
+    max-width: 600px;
+    padding: 16px 24px;
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius-sm, 2px);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.studio-progress-error span {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.8rem;
+    color: #ef4444;
+}
+
+.studio-progress-retry {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+    padding: 4px 12px;
+    cursor: pointer;
+    border-radius: var(--radius-sm, 2px);
+}
+
+.studio-progress-retry:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* ── Right Panel Running State ── */
+
+.studio-exec-running {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    padding: 8px;
+    background: rgba(34, 197, 94, 0.05);
+    border: 1px solid rgba(34, 197, 94, 0.15);
+    border-radius: var(--radius-sm, 2px);
+}
+
+.studio-exec-running-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(34, 197, 94, 0.2);
+    border-top-color: #22c55e;
+    border-radius: 50%;
+    animation: studio-spin 0.8s linear infinite;
+}
+
+.studio-exec-running-text {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.7rem;
+    color: #22c55e;
+}
+
+.studio-exec-running-error {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.7rem;
+    color: #ef4444;
+    padding: 8px;
 }
 
 /* ── Input Area ── */

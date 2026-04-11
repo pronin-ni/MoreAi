@@ -9,11 +9,21 @@
 {% block content %}
 <div class="studio-container">
 
-    <!-- Left Sidebar: Mode Selector -->
+    <!-- Left Sidebar: Chat List + Mode Selector -->
     <aside class="studio-sidebar">
         <div class="studio-sidebar-header">
             <span class="studio-logo">Studio</span>
             <a href="/ui" class="studio-simple-link" title="Simple chat">Simple →</a>
+        </div>
+
+        <!-- New Chat Button -->
+        <button class="studio-new-chat" onclick="clearChat()">
+            + New Chat
+        </button>
+
+        <!-- Chat List -->
+        <div class="studio-chat-list" id="studio-chat-list">
+            <!-- Populated by JS -->
         </div>
 
         <!-- Mode Selector -->
@@ -70,11 +80,6 @@
                 </div>
             </div>
         </details>
-
-        <!-- New Chat Button -->
-        <button class="studio-new-chat" onclick="clearChat()">
-            + New Chat
-        </button>
     </aside>
 
     <!-- Center: Chat Area -->
