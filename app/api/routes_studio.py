@@ -120,6 +120,14 @@ async def studio_chat(
     # Parse conversation
     conversation = _safe_parse_json(conversation_json)
 
+    # Append user message BEFORE dispatching to execution
+    user_msg = {
+        "role": "user",
+        "content": message,
+        "timestamp": time.time(),
+    }
+    conversation.append(user_msg)
+
     # Resolve mode to backend strategy
     policy = get_mode_policy(mode)
     is_pipeline = policy.get("is_pipeline", False)
