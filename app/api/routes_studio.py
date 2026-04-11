@@ -343,6 +343,7 @@ async def _execute_studio_single_model(
                 "used_model": model_id,
                 "used_provider": getattr(response, "_provider", ""),
                 "fallback_count": 0,
+                "quality_score": 0.0,
                 "duration_ms": round(elapsed_ms, 1),
                 "status": "success",
             },
@@ -359,7 +360,9 @@ async def _execute_studio_single_model(
                 "execution_type": "model",
                 "target_model": model_id,
                 "used_model": model_id,
+                "used_provider": "",
                 "fallback_count": 0,
+                "quality_score": 0.0,
                 "duration_ms": round(elapsed_ms, 1),
                 "status": "error",
                 "error": str(exc)[:300],
@@ -380,6 +383,17 @@ async def _execute_studio_pipeline(
     from app.pipeline.types import pipeline_registry
 
     messages = [ChatMessage(**m) for m in conversation if m.get("role") in ("user", "assistant")]
+
+    if not messages:
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={"status": "error", "error": "No user messages in conversation"},
+            status="error",
+            error_message="Conversation is empty. Please send a message.",
+        )
+
     chat_request = ChatCompletionRequest(model=f"pipeline/{pipeline_id}", messages=messages, stream=False)
     request_id = f"studio-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
@@ -429,9 +443,11 @@ async def _execute_studio_pipeline(
                 "execution_type": "pipeline",
                 "target_model": f"pipeline/{pipeline_id}",
                 "used_model": f"pipeline/{pipeline_id}",
+                "used_provider": "",
                 "pipeline_id": pipeline_id,
                 "stage_count": len(p_def.stages),
                 "fallback_count": 0,
+                "quality_score": 0.0,
                 "duration_ms": round(elapsed_ms, 1),
                 "status": "error",
                 "error": str(exc)[:300],
