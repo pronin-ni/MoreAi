@@ -2,12 +2,155 @@
 /* Note: This CSS is ONLY loaded on /studio pages via {% block extra_head %}.
    /ui (index.html) and /admin (admin.html) do NOT include this file. */
 
-/* ── Override base.html .app-container grid for studio only ── */
+/* ── Break out of base.html .app-container grid ── */
 /* studio.css loads AFTER style.css on /studio, so higher cascade wins. */
 .app-container {
     display: block;
     height: 100vh;
     overflow: hidden;
+}
+
+/* ── Progress Animation ── */
+
+.studio-progress-block {
+    padding: 16px;
+    margin: 12px 0;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--studio-border, rgba(255, 255, 255, 0.1));
+    border-radius: var(--studio-radius, 4px);
+}
+
+.studio-progress-mode-badge {
+    display: inline-block;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    margin-bottom: 8px;
+}
+
+.studio-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.studio-progress-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--studio-accent, #3b82f6);
+    border-radius: 50%;
+    animation: studio-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes studio-spin {
+    to { transform: rotate(360deg); }
+}
+
+.studio-progress-body {
+    flex: 1;
+}
+
+.studio-progress-text {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--studio-text, #e4e7f1);
+}
+
+.studio-progress-sub {
+    font-size: 0.62rem;
+    color: var(--studio-text-muted, rgba(255, 255, 255, 0.4));
+    margin-top: 2px;
+}
+
+.studio-progress-elapsed {
+    font-size: 0.6rem;
+    color: var(--studio-text-muted, rgba(255, 255, 255, 0.4));
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.studio-progress-steps {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    justify-content: center;
+}
+
+.studio-progress-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+    transition: background 0.3s;
+}
+
+.studio-progress-dot.active {
+    background: var(--studio-accent, #3b82f6);
+}
+
+/* ── Right Panel Running State ── */
+
+.studio-exec-running {
+    padding: 12px;
+}
+
+.studio-exec-running-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.studio-exec-running-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--studio-accent, #3b82f6);
+    border-radius: 50%;
+    animation: studio-spin 0.8s linear infinite;
+}
+
+.studio-exec-running-text {
+    font-size: 0.7rem;
+    color: var(--studio-text-sec, #9aa0b0);
+}
+
+.studio-exec-running-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.studio-exec-running-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.62rem;
+    color: var(--studio-text-muted, rgba(255, 255, 255, 0.4));
+    transition: color 0.3s;
+}
+
+.studio-exec-running-step.active {
+    color: var(--studio-text, #e4e7f1);
+}
+
+.studio-exec-running-step.done {
+    color: var(--studio-accent, #3b82f6);
+}
+
+.studio-exec-running-step-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
 }
 
 /* ── Layout ── */
