@@ -1,0 +1,120 @@
+{# Studio chat response — OOB swaps for messages, execution summary, conversation state #}
+
+{# Update messages #}
+<div hx-swap-oob="innerHTML" id="studio-messages">
+    {% if messages %}
+    {% for msg in messages %}
+    <div class="studio-message studio-message-{{ msg.role }}">
+        <div class="studio-message-role">{{ msg.role }}</div>
+        <div class="studio-message-content">
+            {% if msg.is_error %}
+            <div class="studio-error-block">{{ msg.content }}</div>
+            {% else %}
+            {{ msg.html_content|safe }}
+            {% endif %}
+        </div>
+        {% if msg.role == "assistant" and not msg.is_error %}
+        <button class="studio-copy-btn" onclick="copyStudioMessage(this)">Copy</button>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="studio-welcome">
+        <div class="studio-welcome-title">MoreAI Studio</div>
+        <div class="studio-welcome-desc">Chat cleared. Choose a mode and ask anything.</div>
+    </div>
+    {% endif %}
+</div>
+
+{# Update execution summary #}
+{% if execution %}
+<div hx-swap-oob="innerHTML" id="studio-execution-summary">
+    <div class="studio-exec-result">
+        <div class="studio-exec-mode">
+            <span class="studio-exec-mode-label">{{ mode_label }}</span>
+            {% if execution.execution_type == "pipeline" %}
+            <span class="studio-exec-pipeline-badge">Pipeline</span>
+            {% else %}
+            <span class="studio-exec-model-badge">Model</span>
+            {% endif %}
+        </div>
+
+        <div class="studio-exec-stats">
+            <div class="studio-exec-stat">
+                <span class="studio-exec-stat-label">Stages</span>
+                <span class="studio-exec-stat-value">{{ execution.stage_count }}</span>
+            </div>
+            <div class="studio-exec-stat">
+                <span class="studio-exec-stat-label">Models</span>
+                <span class="studio-exec-stat-value">{{ execution.selected_models | length }}</span>
+            </div>
+            <div class="studio-exec-stat">
+                <span class="studio-exec-stat-label">Fallbacks</span>
+                <span class="studio-exec-stat-value {% if execution.fallback_count > 0 %}studio-fallback-used{% endif %}">
+                    {{ execution.fallback_count }}
+                </span>
+            </div>
+            <div class="studio-exec-stat">
+                <span class="studio-exec-stat-label">Duration</span>
+                <span class="studio-exec-stat-value">
+                    {% if execution.duration_ms >= 1000 %}
+                    {{ (execution.duration_ms / 1000) | round(1) }}s
+                    {% else %}
+                    {{ execution.duration_ms | round(0) }}ms
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+
+        {% if execution.quality_score > 0 %}
+        <div class="studio-exec-quality">
+            <span class="studio-exec-quality-label">Quality</span>
+            <span class="studio-exec-quality-value">{{ execution.quality_score }}</span>
+        </div>
+        {% endif %}
+
+        {% if execution.selected_models %}
+        <div class="studio-exec-models">
+            <span class="studio-exec-models-label">Models:</span>
+            {% for m in execution.selected_models %}
+            <span class="studio-exec-model-tag">{{ m }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if execution.execution_type == "pipeline" and execution.pipeline_id %}
+        <div class="studio-exec-pipeline-id">
+            Pipeline: <code>{{ execution.pipeline_id }}</code>
+        </div>
+        {% endif %}
+
+        <button class="studio-exec-details-btn" onclick="toggleExecutionDetails()">
+            Show details
+        </button>
+    </div>
+</div>
+{% endif %}
+
+{# Update hidden conversation input #}
+<input hx-swap-oob="outerHTML" id="studio-conversation-input" type="hidden" name="conversation_json"
+       value='{{ conversation | tojson }}'>
+
+{# Response state (hidden, for JS detection) #}
+<div class="studio-response-state"
+     data-studio-status="{{ status }}"
+     data-studio-mode="{{ mode }}"
+     data-studio-execution-id="{{ execution_id }}"
+     style="display:none;"></div>
+
+{# Error message if any #}
+{% if error_message %}
+<div hx-swap-oob="beforeend" id="studio-messages">
+    <div class="studio-message studio-message-error">
+        <div class="studio-message-role">error</div>
+        <div class="studio-error-block">
+            {{ error_message }}
+            <button class="studio-retry-btn" onclick="retryStudioMessage()">Retry</button>
+        </div>
+    </div>
+</div>
+{% endif %}

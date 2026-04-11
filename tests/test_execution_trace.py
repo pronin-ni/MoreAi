@@ -8,6 +8,7 @@ Covers:
 - trace contains cross-stage signals
 - execution detail endpoint fallbacks to persistent store
 - execution summary endpoint
+- studio execution details endpoint (user-facing)
 """
 
 from unittest.mock import AsyncMock, patch
@@ -167,3 +168,165 @@ class TestExecutionTraceAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert "total_stored" in data or "stats" in data or "count" in data
+
+
+# ── Studio Execution Details Tests ──
+
+
+class TestStudioExecutionDetails:
+    """Tests for /studio/executions/{id} endpoint and user-facing details."""
+
+    def test_studio_execution_detail_not_found(self, client):
+        resp = client.get("/studio/executions/nonexistent")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "error" in data
+
+    def test_studio_user_facing_details_structure(self):
+        """Test the _build_user_facing_details helper produces correct shape."""
+        from app.api.routes_studio import _build_user_facing_details
+
+        raw_data = {
+            "execution_id": "test-123",
+            "pipeline_id": "generate-review-refine",
+            "pipeline_display_name": "Generate → Review → Refine",
+            "status": "success",
+            "duration_ms": 12000,
+            "total_fallbacks": 1,
+            "total_retries": 0,
+            "stages": [
+                {
+                    "stage_id": "draft",
+                    "stage_role": "generate",
+                    "status": "completed",
+                    "selected_model": "qwen",
+                    "selected_provider": "qwen-provider",
+                    "selected_transport": "api",
+                    "duration_ms": 3000,
+                    "fallback_count": 0,
+                    "retry_count": 0,
+                    "selection_explain": {
+                        "selected_model": "qwen",
+                        "selected_provider": "qwen-provider",
+                        "selected_transport": "api",
+                        "fallback_chain": [],
+                    },
+                },
+                {
+                    "stage_id": "review",
+                    "stage_role": "review",
+                    "status": "completed",
+                    "selected_model": "glm",
+                    "selected_provider": "glm-provider",
+                    "selected_transport": "api",
+                    "duration_ms": 5000,
+                    "fallback_count": 1,
+                    "retry_count": 0,
+                    "selection_explain": {
+                        "selected_model": "glm",
+                        "selected_provider": "glm-provider",
+                        "selected_transport": "api",
+                        "fallback_chain": [
+                            {"failed_model": "qwen", "reason": "timeout", "penalty": 0.08},
+                        ],
+                    },
+                },
+                {
+                    "stage_id": "refine",
+                    "stage_role": "refine",
+                    "status": "completed",
+                    "selected_model": "qwen",
+                    "selected_provider": "qwen-provider",
+                    "selected_transport": "api",
+                    "duration_ms": 4000,
+                    "fallback_count": 0,
+                    "retry_count": 0,
+                    "selection_explain": {
+                        "selected_model": "qwen",
+                        "selected_provider": "qwen-provider",
+                        "selected_transport": "api",
+                        "fallback_chain": [],
+                    },
+                    "quality_score": 0.75,
+                    "cross_stage": {
+                        "review_actionability": 0.8,
+                        "refine_effectiveness": 0.7,
+                    },
+                },
+            ],
+        }
+
+        result = _build_user_facing_details(raw_data)
+
+        # Top-level structure
+        assert result["execution_id"] == "test-123"
+        assert result["stage_count"] == 3
+        assert result["total_fallbacks"] == 1
+        assert "verdict" in result
+        assert "stages" in result
+
+        # Stage cards
+        assert len(result["stages"]) == 3
+        stage1 = result["stages"][0]
+        assert stage1["role_label"] == "Draft"
+        assert stage1["status_label"] == "Completed"
+        assert stage1["explanation"] == "Draft generated"
+        assert stage1["fallback_count"] == 0
+
+        stage2 = result["stages"][1]
+        assert stage2["fallback_count"] == 1
+        assert len(stage2["fallbacks"]) == 1
+        assert stage2["fallbacks"][0]["reason"] == "timed out"  # User-friendly
+        assert stage2["explanation"] == "Answer reviewed (with fallback)"
+
+        # Cross-stage
+        assert "cross_stage" in result
+        assert result["verdict"]["has_fallbacks"] is True
+
+    def test_user_friendly_fallback_reason(self):
+        """Test fallback reason translation."""
+        from app.api.routes_studio import _user_friendly_fallback_reason
+
+        assert _user_friendly_fallback_reason("timeout") == "timed out"
+        assert _user_friendly_fallback_reason("circuit_breaker_open") == "temporarily unavailable"
+        assert _user_friendly_fallback_reason("model_unavailable") == "unavailable"
+        assert _user_friendly_fallback_reason("rate_limited") == "rate limited"
+        assert _user_friendly_fallback_reason("") == "switched model"
+        assert _user_friendly_fallback_reason("some_unknown_error") == "error occurred"
+        assert _user_friendly_fallback_reason("internal_server_error") == "error occurred"
+
+    def test_stage_explanation_text(self):
+        """Test stage explanation text generation."""
+        from app.api.routes_studio import _stage_explanation
+
+        assert _stage_explanation("generate", "completed", 0) == "Draft generated"
+        assert _stage_explanation("generate", "completed", 1) == "Draft generated (with fallback)"
+        assert _stage_explanation("generate", "skipped", 0) == "Draft generated (skipped)"
+        assert _stage_explanation("generate", "failed", 0) == "Draft generated — failed"
+        assert _stage_explanation("unknown", "completed", 0) == "Unknown completed"
+
+    def test_verdict_computation(self):
+        """Test overall verdict computation."""
+        from app.api.routes_studio import _compute_verdict
+
+        # All completed, high quality
+        stages = [
+            {"status": "completed", "quality_score": 0.8},
+            {"status": "completed", "quality_score": 0.75},
+        ]
+        verdict = _compute_verdict(stages, 0, {})
+        assert verdict["label"] == "High confidence result"
+        assert verdict["all_completed"] is True
+        assert verdict["has_fallbacks"] is False
+
+        # With fallbacks
+        verdict_fb = _compute_verdict(stages, 2, {})
+        assert verdict_fb["label"] == "Completed with fallbacks"
+
+        # Low quality
+        stages_low = [
+            {"status": "completed", "quality_score": 0.3},
+        ]
+        verdict_low = _compute_verdict(stages_low, 0, {})
+        assert verdict_low["label"] == "Result with low confidence"
+
