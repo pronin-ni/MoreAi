@@ -23,11 +23,11 @@
     const MAX_CHATS = 50;
     const MAX_MESSAGES = 100;
     const STUDIO_MODES = {
-        fast: { label: 'Fast', isPipeline: false },
-        balanced: { label: 'Balanced', isPipeline: false },
-        quality: { label: 'Quality', isPipeline: true },
-        review: { label: 'Review', isPipeline: true },
-        deep: { label: 'Deep', isPipeline: true },
+        fast: { label: 'Быстрый', isPipeline: false },
+        balanced: { label: 'Сбалансированный', isPipeline: false },
+        quality: { label: 'Качество', isPipeline: true },
+        review: { label: 'Рецензия', isPipeline: true },
+        deep: { label: 'Глубокий', isPipeline: true },
     };
 
     // ── Mode-aware progress sequences ──
@@ -35,30 +35,30 @@
     // durations are approximate — used for perceived progress, not real telemetry.
     const PROGRESS_SEQUENCES = {
         fast: [
-            { text: 'Selecting model…', subtext: '', duration_ms: 800 },
-            { text: 'Generating response…', subtext: '', duration_ms: 4000 },
+            { text: 'Выбор модели…', subtext: '', duration_ms: 800 },
+            { text: 'Генерация ответа…', subtext: '', duration_ms: 4000 },
         ],
         balanced: [
-            { text: 'Selecting best model…', subtext: '', duration_ms: 1000 },
-            { text: 'Generating response…', subtext: '', duration_ms: 6000 },
+            { text: 'Выбор лучшей модели…', subtext: '', duration_ms: 1000 },
+            { text: 'Генерация ответа…', subtext: '', duration_ms: 6000 },
         ],
         quality: [
-            { text: 'Selecting best model…', subtext: '', duration_ms: 1200 },
-            { text: 'Generating draft…', subtext: 'This mode may take a little longer for a better result', duration_ms: 5000 },
-            { text: 'Reviewing answer…', subtext: 'Checking for accuracy and completeness', duration_ms: 5000 },
-            { text: 'Refining final response…', subtext: '', duration_ms: 5000 },
+            { text: 'Выбор лучшей модели…', subtext: '', duration_ms: 1200 },
+            { text: 'Создание черновика…', subtext: 'Этот режим может занять больше времени для лучшего результата', duration_ms: 5000 },
+            { text: 'Проверка ответа…', subtext: 'Проверка точности и полноты', duration_ms: 5000 },
+            { text: 'Финальная доработка…', subtext: '', duration_ms: 5000 },
         ],
         review: [
-            { text: 'Selecting best model…', subtext: '', duration_ms: 1200 },
-            { text: 'Drafting answer…', subtext: '', duration_ms: 5000 },
-            { text: 'Critiquing response…', subtext: 'Looking for errors and omissions', duration_ms: 5000 },
-            { text: 'Improving final answer…', subtext: 'This mode may take a little longer for a better result', duration_ms: 5000 },
+            { text: 'Выбор лучшей модели…', subtext: '', duration_ms: 1200 },
+            { text: 'Создание ответа…', subtext: '', duration_ms: 5000 },
+            { text: 'Критика ответа…', subtext: 'Поиск ошибок и упущений', duration_ms: 5000 },
+            { text: 'Улучшение ответа…', subtext: 'Этот режим может занять больше времени для лучшего результата', duration_ms: 5000 },
         ],
         deep: [
-            { text: 'Selecting best model…', subtext: '', duration_ms: 1500 },
-            { text: 'Drafting answer…', subtext: '', duration_ms: 5000 },
-            { text: 'Verifying reasoning…', subtext: 'Cross-checking facts and logic', duration_ms: 6000 },
-            { text: 'Finalizing high-confidence result…', subtext: 'This mode may take a little longer for a better result', duration_ms: 5000 },
+            { text: 'Выбор лучшей модели…', subtext: '', duration_ms: 1500 },
+            { text: 'Создание ответа…', subtext: '', duration_ms: 5000 },
+            { text: 'Верификация…', subtext: 'Перекрёстная проверка фактов и логики', duration_ms: 6000 },
+            { text: 'Финализация результата…', subtext: 'Этот режим может занять больше времени для лучшего результата', duration_ms: 5000 },
         ],
     };
 

@@ -9,26 +9,26 @@
 {% block content %}
 <div class="studio-container">
 
-    <!-- Left Sidebar: Chat List + Mode Selector -->
+    <!-- Левая панель: Список чатов + Выбор режима -->
     <aside class="studio-sidebar">
         <div class="studio-sidebar-header">
             <span class="studio-logo">Studio</span>
-            <a href="/ui" class="studio-simple-link" title="Simple chat">Simple →</a>
+            <a href="/ui" class="studio-simple-link" title="Простой чат">Простой →</a>
         </div>
 
-        <!-- New Chat Button -->
+        <!-- Кнопка нового чата -->
         <button class="studio-new-chat" onclick="clearChat()">
-            + New Chat
+            + Новый чат
         </button>
 
-        <!-- Chat List -->
+        <!-- Список чатов -->
         <div class="studio-chat-list" id="studio-chat-list">
-            <!-- Populated by JS -->
+            <!-- Заполняется из JS -->
         </div>
 
-        <!-- Mode Selector -->
+        <!-- Выбор режима -->
         <div class="studio-modes">
-            <div class="studio-modes-label">Response Mode</div>
+            <div class="studio-modes-label">Режим ответа</div>
             {% for m in modes %}
             <label class="studio-mode {% if m.key == default_mode %}selected{% endif %}"
                    data-mode="{{ m.key }}"
@@ -39,9 +39,9 @@
                 <div class="studio-mode-content">
                     <span class="studio-mode-label">{{ m.label }}</span>
                     {% if m.is_pipeline %}
-                    <span class="studio-mode-badge pipeline">pipeline</span>
+                    <span class="studio-mode-badge pipeline">пайплайн</span>
                     {% else %}
-                    <span class="studio-mode-badge model">model</span>
+                    <span class="studio-mode-badge model">модель</span>
                     {% endif %}
                 </div>
                 <span class="studio-mode-desc">{{ m.description }}</span>
@@ -49,27 +49,27 @@
             {% endfor %}
         </div>
 
-        <!-- Advanced Toggle -->
+        <!-- Расширенные настройки -->
         <details class="studio-advanced">
-            <summary>Advanced</summary>
+            <summary>Расширенные</summary>
             <div class="studio-advanced-content">
                 <label class="studio-advanced-field">
-                    <span>Request Type</span>
+                    <span>Тип запроса</span>
                     <select id="studio-advanced-type" onchange="toggleAdvancedModel()">
-                        <option value="standard">Use mode selection</option>
-                        <option value="custom_model">Specify model</option>
+                        <option value="standard">Использовать выбор режима</option>
+                        <option value="custom_model">Указать модель</option>
                     </select>
                 </label>
                 <div id="studio-advanced-model-field" style="display:none;">
                     <label class="studio-advanced-field">
-                        <span>Model</span>
+                        <span>Модель</span>
                         <select id="studio-advanced-model">
-                            {% for g in [("Browser", browser_models), ("API", api_models), ("Agent", agent_models)] %}
+                            {% for g in [("Браузер", browser_models), ("API", api_models), ("Агент", agent_models)] %}
                             {% if g[1] %}
                             <optgroup label="{{ g[0] }}">
                                 {% for m in g[1] %}
                                 <option value="{{ m.id }}" {% if not m.enabled %}disabled{% endif %}>
-                                    {{ m.display_name }} {% if not m.enabled %}(disabled){% endif %}
+                                    {{ m.display_name }} {% if not m.enabled %}(отключена){% endif %}
                                 </option>
                                 {% endfor %}
                             </optgroup>
@@ -82,20 +82,20 @@
         </details>
     </aside>
 
-    <!-- Center: Chat Area -->
+    <!-- Центр: Область чата -->
     <main class="studio-chat">
-        <!-- Chat Header -->
+        <!-- Заголовок чата -->
         <div class="studio-chat-header">
-            <span id="studio-mode-badge" class="studio-current-mode">{{ STUDIO_MODES.get(default_mode, {}).get('label', 'Balanced') }}</span>
-            <span id="studio-pipeline-indicator" class="studio-pipeline-indicator" style="display:none;">Pipeline</span>
+            <span id="studio-mode-badge" class="studio-current-mode">{{ STUDIO_MODES.get(default_mode, {}).get('label', 'Сбалансированный') }}</span>
+            <span id="studio-pipeline-indicator" class="studio-pipeline-indicator" style="display:none;">Пайплайн</span>
         </div>
 
-        <!-- Messages Area -->
+        <!-- Область сообщений -->
         <div class="studio-messages" id="studio-messages">
             <div class="studio-welcome">
                 <div class="studio-welcome-title">MoreAI Studio</div>
-                <div class="studio-welcome-desc">Smart chat with pipeline-aware execution.
-                    Choose a mode and ask anything.</div>
+                <div class="studio-welcome-desc">Умный чат с осведомлённостью о пайплайнах.
+                    Выберите режим и задайте вопрос.</div>
                 <div class="studio-welcome-modes">
                     {% for m in modes %}
                     <span class="studio-welcome-chip" onclick="selectMode('{{ m.key }}')">{{ m.label }}</span>
@@ -104,13 +104,13 @@
             </div>
         </div>
 
-        <!-- Loading State -->
+        <!-- Состояние загрузки -->
         <div class="studio-loading" id="studio-loading" style="display:none;">
             <div class="studio-loading-spinner"></div>
-            <span id="studio-loading-text">Thinking...</span>
+            <span id="studio-loading-text">Думаю...</span>
         </div>
 
-        <!-- Input Area -->
+        <!-- Поле ввода -->
         <div class="studio-input-area">
             <form id="studio-chat-form"
                   hx-post="/studio/chat"
@@ -127,7 +127,7 @@
                 <textarea
                     id="studio-message-input"
                     name="message"
-                    placeholder="Ask anything..."
+                    placeholder="Задайте вопрос..."
                     rows="1"
                     autofocus
                 ></textarea>
@@ -137,20 +137,20 @@
             </form>
         </div>
 
-        <!-- Hidden response target for HTMX -->
+        <!-- Скрытая цель для HTMX -->
         <div id="studio-response-target" style="display:none;"></div>
     </main>
 
-    <!-- Right Panel: Execution Summary -->
+    <!-- Правая панель: Сводка выполнения -->
     <aside class="studio-execution" id="studio-execution-panel">
         <div class="studio-execution-header">
-            <span>Execution</span>
-            <button class="studio-exec-clear" onclick="clearExecutionSummary()" title="Clear">✕</button>
+            <span>Выполнение</span>
+            <button class="studio-exec-clear" onclick="clearExecutionSummary()" title="Очистить">✕</button>
         </div>
         <div id="studio-execution-summary">
             <div class="studio-execution-empty">
                 <div class="studio-exec-empty-icon">⚡</div>
-                <div class="studio-exec-empty-text">Send a message to see execution details here</div>
+                <div class="studio-exec-empty-text">Отправьте сообщение, чтобы увидеть детали выполнения</div>
             </div>
         </div>
         <div id="studio-execution-details" style="display:none;"></div>

@@ -11,6 +11,7 @@ from app.admin.config_manager import config_manager
 from app.admin.observer import observer
 from app.admin.router import router as admin_router
 from app.api.rate_limit import RateLimitMiddleware
+from app.api.routes_home import router as home_router
 from app.api.routes_openai import router as openai_router
 from app.api.routes_studio import router as studio_router
 from app.api.routes_ui import router as ui_router
@@ -146,13 +147,9 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     )
 
 
+app.include_router(home_router)
 app.include_router(openai_router)
 app.include_router(ui_router)
 app.include_router(studio_router)
 app.include_router(admin_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-
-@app.get("/")
-async def root():
-    return {"message": "MoreAI Proxy is running", "version": "0.1.0"}

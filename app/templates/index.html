@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}MoreAI - Proxy UI{% endblock %}
+{% block title %}MoreAI — Чат{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -13,28 +13,28 @@
 {% block content %}
 <aside class="sidebar" id="models-panel">
     <div class="sidebar-header">
-        <h2>Models</h2>
+        <h2>Модели</h2>
         <button
             class="btn-icon"
             hx-get="/ui/models"
             hx-include="#models-search-input, #models-selected-input"
             hx-target="#models-panel"
             hx-swap="outerHTML"
-            title="Refresh models"
+            title="Обновить модели"
         >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
             </svg>
         </button>
     </div>
-    
+
     <div class="search-box">
         <input type="hidden" id="models-selected-input" name="selected" value="{{ selected_model }}">
         <input
             id="models-search-input"
             type="text"
             name="q"
-            placeholder="Search models..."
+            placeholder="Поиск моделей…"
             hx-get="/ui/models"
             hx-include="#models-selected-input"
             hx-target="#models-panel"
@@ -47,7 +47,7 @@
 
     {% if selected_model %}
     <div class="current-selection-card">
-        <div class="current-selection-label">Current model</div>
+        <div class="current-selection-label">Текущая модель</div>
         <div class="current-selection-display">{{ selected_display_name }}</div>
         <div class="current-selection-id">{{ selected_model }}</div>
     </div>
@@ -72,9 +72,9 @@
             hx-vals='{"action": "clear"}'
             hx-target="#chat-response-target"
             hx-swap="innerHTML"
-            title="Clear chat"
+            title="Очистить чат"
         >
-            Clear
+            Очистить
         </button>
     </div>
 
@@ -86,8 +86,8 @@
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                 </svg>
-                <h3>Start a conversation</h3>
-                <p>Select a model from the sidebar and send a message to begin.</p>
+                <h3>Начните разговор</h3>
+                <p>Выберите модель в боковой панели и отправьте сообщение.</p>
             </div>
         {% endif %}
     </div>
@@ -102,11 +102,11 @@
     >
         <input type="hidden" name="model" value="{{ selected_model }}">
         <input type="hidden" id="conversation-json-input" name="conversation_json" value="{{ conversation_json }}">
-        
+
         <div class="chat-input-wrapper">
             <textarea
                 name="message"
-                placeholder="Message {{ selected_display_name or 'the selected model' }}..."
+                placeholder="{{ selected_display_name or 'Выберите модель' }}…"
                 rows="1"
                 {%
                 if not selected_model
@@ -134,19 +134,19 @@
                 </svg>
             </button>
         </div>
-        
+
         <div class="hx-indicator">
             <span class="spinner"></span>
-            <span>Sending...</span>
+            <span>Отправка…</span>
         </div>
     </form>
-    
+
     <div id="chat-response-target"></div>
 </main>
 
 <aside class="diagnostics-panel" id="diagnostics-panel">
     <div class="diagnostics-header">
-        <h3>Diagnostics</h3>
+        <h3>Диагностика</h3>
     </div>
 
     <div id="diagnostics-content-target">

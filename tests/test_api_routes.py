@@ -153,5 +153,8 @@ class TestRootEndpoint:
         response = client.get("/")
 
         assert response.status_code == 200
-        data = response.json()
-        assert "MoreAI Proxy is running" in data["message"]
+        assert "text/html" in response.headers.get("content-type", "")
+        assert "MoreAI" in response.text
+        assert "/studio" in response.text
+        assert "/ui" in response.text
+        assert "/admin" in response.text

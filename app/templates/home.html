@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoreAI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23ffffff'/%3E%3Ctext x='32' y='44' font-family='monospace' font-size='36' font-weight='300' text-anchor='middle' fill='%231f2228'%3EM%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/css/home.css">
+</head>
+<body>
+
+    <!-- Sticky top nav -->
+    <nav class="topnav" id="topnav">
+        <div class="topnav-inner">
+            <a href="/" class="topnav-logo">MoreAI</a>
+            <div class="topnav-links">
+                <a href="#engine">Как работает</a>
+                <a href="#modes">Режимы</a>
+                <a href="#usecases">Применение</a>
+                <a href="#api">API</a>
+                <a href="#models">Модели</a>
+            </div>
+            <div class="topnav-actions">
+                <a href="/studio" class="topnav-btn">Studio</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="home-wrapper">
+
+        <!-- ════════════════════ HERO ════════════════════ -->
+        <section class="hero-section" id="hero">
+            <div class="hero-glow"></div>
+            <div class="hero-content">
+                <div class="hero-logo">M</div>
+                <h1 class="hero-title">MoreAI</h1>
+                <p class="hero-subtitle">Умный OpenAI-совместимый API с&nbsp;мульти-маршрутизацией, пайплайнами и&nbsp;самовосстановлением</p>
+                <p class="hero-desc">Одна точка входа для множества AI-моделей. Система сама выбирает лучшую модель, проверяет качество ответа и&nbsp;автоматически восстанавливается при&nbsp;сбоях.</p>
+                <div class="hero-actions">
+                    <a href="/studio" class="btn btn-primary">Открыть Studio</a>
+                    <a href="/docs" class="btn btn-ghost">API Docs</a>
+                    <a href="/ui" class="btn btn-ghost">Простой чат</a>
+                </div>
+                <div class="hero-chips">
+                    <span class="chip">OpenAI API</span>
+                    <span class="chip">Multi-Model</span>
+                    <span class="chip">Pipelines</span>
+                    <span class="chip">Self-Healing</span>
+                    <span class="chip">Quality Scoring</span>
+                    <span class="chip">Browser AI</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ ENGINE ════════════════════ -->
+        <section class="section" id="engine">
+            <h2 class="section-title">Как это работает</h2>
+            <p class="section-subtitle">Каждый запрос проходит через интеллектуальный engine, который обеспечивает качество и&nbsp;надёжность ответа.</p>
+            <div class="flow-grid">
+                <div class="flow-card">
+                    <div class="flow-card-num">1</div>
+                    <div class="flow-card-body">
+                        <h3 class="flow-card-title">Запрос</h3>
+                        <p class="flow-card-desc">Вы отправляете сообщение через Studio, UI или&nbsp;API</p>
+                    </div>
+                </div>
+                <div class="flow-connector"></div>
+                <div class="flow-card">
+                    <div class="flow-card-num">2</div>
+                    <div class="flow-card-body">
+                        <h3 class="flow-card-title">Выбор модели</h3>
+                        <p class="flow-card-desc">Система ранжирует модели по&nbsp;доступности, задержке, стабильности и&nbsp;качеству</p>
+                    </div>
+                </div>
+                <div class="flow-connector"></div>
+                <div class="flow-card">
+                    <div class="flow-card-num">3</div>
+                    <div class="flow-card-body">
+                        <h3 class="flow-card-title">Маршрутизация</h3>
+                        <p class="flow-card-desc">Одна модель или&nbsp;многоступенчатый пайплайн с&nbsp;проверкой качества</p>
+                    </div>
+                </div>
+                <div class="flow-connector"></div>
+                <div class="flow-card">
+                    <div class="flow-card-num">4</div>
+                    <div class="flow-card-body">
+                        <h3 class="flow-card-title">Самовосстановление</h3>
+                        <p class="flow-card-desc">Автоматический fallback при&nbsp;сбое. Circuit breaker отключает сломанные провайдеры</p>
+                    </div>
+                </div>
+                <div class="flow-connector"></div>
+                <div class="flow-card flow-card-final">
+                    <div class="flow-card-num">5</div>
+                    <div class="flow-card-body">
+                        <h3 class="flow-card-title">Ответ</h3>
+                        <p class="flow-card-desc">Качество оценено. Трассировка сохранена. Ответ доставлен.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ MODES ════════════════════ -->
+        <section class="section" id="modes">
+            <h2 class="section-title">Режимы ответа</h2>
+            <p class="section-subtitle">Доступны в&nbsp;Studio. Каждый режим балансирует скорость и&nbsp;качество по-своему.</p>
+            <div class="modes-grid">
+                <div class="mode-card">
+                    <div class="mode-header">
+                        <span class="mode-badge mode-badge-fast">Быстрый</span>
+                        <span class="mode-type">Одна модель</span>
+                    </div>
+                    <p class="mode-desc">Мгновенный ответ от&nbsp;самой быстрой модели. Для простых вопросов и&nbsp;быстрой итерации.</p>
+                    <div class="mode-pipeline">kimi → ответ</div>
+                </div>
+                <div class="mode-card">
+                    <div class="mode-header">
+                        <span class="mode-badge mode-badge-balanced">Сбалансированный</span>
+                        <span class="mode-type">Одна модель</span>
+                    </div>
+                    <p class="mode-desc">Модель по&nbsp;умолчанию с&nbsp;хорошим соотношением скорости и&nbsp;качества. На&nbsp;каждый день.</p>
+                    <div class="mode-pipeline">qwen → ответ</div>
+                </div>
+                <div class="mode-card">
+                    <div class="mode-header">
+                        <span class="mode-badge mode-badge-quality">Качество</span>
+                        <span class="mode-type">Пайплайн</span>
+                    </div>
+                    <p class="mode-desc">Создать → Проверить → Улучшить. Контент создаётся, рецензируется и&nbsp;дорабатывается разными моделями.</p>
+                    <div class="mode-pipeline">qwen → glm → qwen</div>
+                </div>
+                <div class="mode-card">
+                    <div class="mode-header">
+                        <span class="mode-badge mode-badge-review">Рецензия</span>
+                        <span class="mode-type">Пайплайн</span>
+                    </div>
+                    <p class="mode-desc">Создать → Критика → Перегенерация. Глубокий анализ для&nbsp;контента, требующего тщательной проверки.</p>
+                    <div class="mode-pipeline">kimi → glm → kimi</div>
+                </div>
+                <div class="mode-card mode-card-highlight">
+                    <div class="mode-header">
+                        <span class="mode-badge mode-badge-deep">Глубокий</span>
+                        <span class="mode-type">Пайплайн</span>
+                    </div>
+                    <p class="mode-desc">Черновик → Верификация → Финализация. Максимальное качество с&nbsp;проверкой фактов на&nbsp;каждом этапе.</p>
+                    <div class="mode-pipeline">qwen → glm → qwen</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ USE CASES ════════════════════ -->
+        <section class="section" id="usecases">
+            <h2 class="section-title">Применение</h2>
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-icon">✍️</div>
+                    <h3 class="card-title">Лучший контент</h3>
+                    <p class="card-desc">Создайте черновик, получите рецензию, доработайте до&nbsp;финальной версии. Пайплайн гарантирует качество.</p>
+                    <span class="card-link">Режим: Качество →</span>
+                </div>
+                <div class="card">
+                    <div class="card-icon">✅</div>
+                    <h3 class="card-title">Верификация ответов</h3>
+                    <p class="card-desc">Черновик → проверка точности → финализация с&nbsp;исправлениями. Идеально для&nbsp;фактологического контента.</p>
+                    <span class="card-link">Режим: Глубокий →</span>
+                </div>
+                <div class="card">
+                    <div class="card-icon">⚡</div>
+                    <h3 class="card-title">Быстрые ответы</h3>
+                    <p class="card-desc">Нужен мгновенный ответ? Маршрутизация на&nbsp;одну модель — самая быстрая доставка.</p>
+                    <span class="card-link">Режим: Быстрый →</span>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🧠</div>
+                    <h3 class="card-title">Мульти-модельное рассуждение</h3>
+                    <p class="card-desc">Разные модели сильны в&nbsp;разном. Система выбирает лучшую для&nbsp;каждого этапа.</p>
+                    <span class="card-link">Режим: Рецензия →</span>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🌐</div>
+                    <h3 class="card-title">Браузерная автоматизация</h3>
+                    <p class="card-desc">Доступ к&nbsp;веб-чатам без&nbsp;API-ключей. Самовосстановление поддерживает соединение при&nbsp;изменениях UI провайдеров.</p>
+                    <span class="card-link">Все режимы →</span>
+                </div>
+                <div class="card">
+                    <div class="card-icon">🔄</div>
+                    <h3 class="card-title">Надёжная доставка</h3>
+                    <p class="card-desc">Если модель падает — система автоматически переключается на&nbsp;следующую. Без&nbsp;тупиков.</p>
+                    <span class="card-link">Все режимы →</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ WHY MOREAI ════════════════════ -->
+        <section class="section" id="why">
+            <h2 class="section-title">Почему MoreAI</h2>
+            <div class="comparison">
+                <div class="comparison-col">
+                    <div class="comparison-header">Обычный AI API</div>
+                    <ul class="comparison-list">
+                        <li>Одна модель на&nbsp;запрос</li>
+                        <li>Нет автоматического fallback</li>
+                        <li>Нет встроенной проверки ответа</li>
+                        <li>Фиксированное качество — один выстрел</li>
+                        <li>Нужен API-ключ</li>
+                        <li>Не работает через браузер</li>
+                    </ul>
+                </div>
+                <div class="comparison-col comparison-col-highlight">
+                    <div class="comparison-header">MoreAI</div>
+                    <ul class="comparison-list">
+                        <li>Мульти-маршрутизация с&nbsp;интеллектуальным выбором</li>
+                        <li>Автоматический fallback при&nbsp;сбое</li>
+                        <li>Пайплайны: создать → проверить → улучшить</li>
+                        <li>Адаптивная оценка качества, улучшается со&nbsp;временем</li>
+                        <li>Браузерная автоматизация — без&nbsp;API-ключей</li>
+                        <li>Полная видимость выполнения каждого запроса</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ INTERFACES ════════════════════ -->
+        <section class="section" id="interfaces">
+            <h2 class="section-title">Интерфейсы</h2>
+            <div class="interface-grid">
+                <a href="/studio" class="interface-card">
+                    <div class="interface-card-icon">⚡</div>
+                    <h3 class="interface-card-title">Studio</h3>
+                    <p class="interface-card-desc">Умный чат с&nbsp;выбором режима, мульти-чат, трассировками выполнения и&nbsp;осведомлённостью о&nbsp;пайплайнах</p>
+                    <span class="interface-card-cta">Открыть Studio →</span>
+                </a>
+                <a href="/ui" class="interface-card">
+                    <div class="interface-card-icon">💬</div>
+                    <h3 class="interface-card-title">Простой чат</h3>
+                    <p class="interface-card-desc">Лёгкий интерфейс с&nbsp;выбором модели и&nbsp;панелью диагностики. Быстро и&nbsp;просто.</p>
+                    <span class="interface-card-cta">Открыть чат →</span>
+                </a>
+                <a href="/admin" class="interface-card">
+                    <div class="interface-card-icon">🔧</div>
+                    <h3 class="interface-card-title">Админ</h3>
+                    <p class="interface-card-desc">Управление системой: провайдеры, модели, пайплайны, скоринг, тренды, здоровье, аналитика</p>
+                    <span class="interface-card-cta">Открыть админ →</span>
+                </a>
+                <a href="/docs" class="interface-card">
+                    <div class="interface-card-icon">📡</div>
+                    <h3 class="interface-card-title">API</h3>
+                    <p class="interface-card-desc">OpenAI-совместимый API. Интегрируйте в&nbsp;свои приложения через&nbsp;любой SDK.</p>
+                    <span class="interface-card-cta">Открыть документацию →</span>
+                </a>
+            </div>
+        </section>
+
+        <!-- ════════════════════ MODELS ════════════════════ -->
+        <section class="section" id="models">
+            <h2 class="section-title">Доступные модели</h2>
+            <div id="models-loading" class="models-status">Загрузка списка моделей…</div>
+            <div id="models-error" class="models-status" style="display:none;">Не удалось загрузить модели</div>
+            <div id="models-list" class="model-panel" style="display:none;">
+                <div class="model-panel-header">
+                    <span>Модель</span>
+                    <span>Транспорт</span>
+                    <span>Провайдер</span>
+                    <span></span>
+                </div>
+                <div id="model-items"></div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ API EXAMPLES ════════════════════ -->
+        <section class="section" id="api">
+            <h2 class="section-title">Примеры API</h2>
+            <div class="api-grid">
+                <div class="api-block">
+                    <div class="api-block-header">
+                        <span class="api-block-label">Drop-in OpenAI compatible</span>
+                        <span class="api-block-lang">cURL</span>
+                    </div>
+                    <pre><code>curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen",
+    "messages": [
+      {"role": "user", "content": "Привет"}
+    ],
+    "stream": false
+  }'</code></pre>
+                </div>
+                <div class="api-block">
+                    <div class="api-block-header">
+                        <span class="api-block-label">Pipeline call</span>
+                        <span class="api-block-lang">cURL</span>
+                    </div>
+                    <pre><code>curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "pipeline/generate-review-refine",
+    "messages": [
+      {"role": "user", "content": "Объясни замыкания"}
+    ],
+    "stream": false
+  }'</code></pre>
+                </div>
+                <div class="api-block">
+                    <div class="api-block-header">
+                        <span class="api-block-label">Use from Python SDK</span>
+                        <span class="api-block-lang">Python</span>
+                    </div>
+                    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="not-needed",
+)
+
+response = client.chat.completions.create(
+    model="qwen",
+    messages=[{"role": "user", "content": "Привет"}],
+)
+print(response.choices[0].message.content)</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════ FOOTER ════════════════════ -->
+        <footer class="footer">
+            <span>MoreAI v0.1.0</span>
+            <span class="footer-sep">·</span>
+            <a href="/docs">OpenAPI Docs</a>
+            <span class="footer-sep">·</span>
+            <a href="/health">Health</a>
+            <span class="footer-sep">·</span>
+            <a href="/v1/models">Models JSON</a>
+            <span class="footer-sep">·</span>
+            <a href="/studio">Studio</a>
+        </footer>
+
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // ── Scroll-aware topnav ──
+        var nav = document.getElementById('topnav');
+        if (nav) {
+            window.addEventListener('scroll', function() {
+                nav.classList.toggle('topnav-scrolled', window.scrollY > 60);
+            }, { passive: true });
+        }
+
+        // ── Intersection Observer for fade-in ──
+        if ('IntersectionObserver' in window) {
+            var sections = document.querySelectorAll('.section');
+            var observer = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('section-visible');
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.08 });
+            sections.forEach(function(s) { observer.observe(s); });
+        } else {
+            document.querySelectorAll('.section').forEach(function(s) {
+                s.classList.add('section-visible');
+            });
+        }
+
+        // ── Fetch and render model list ──
+        (async function() {
+            var listEl = document.getElementById('models-list');
+            var itemsEl = document.getElementById('model-items');
+            var loadingEl = document.getElementById('models-loading');
+            var errorEl = document.getElementById('models-error');
+
+            try {
+                var resp = await fetch('/v1/models');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                var data = await resp.json();
+                var models = data.data || [];
+
+                if (models.length === 0) {
+                    loadingEl.textContent = 'Модели не настроены';
+                    return;
+                }
+
+                var groups = {};
+                models.forEach(function(m) {
+                    var transport = (m.owned_by || 'unknown').replace('moreai-', '');
+                    if (!groups[transport]) groups[transport] = [];
+                    groups[transport].push(m);
+                });
+
+                var order = ['browser', 'api', 'agent'];
+                var sortedTransports = Object.keys(groups).sort(function(a, b) {
+                    var ai = order.indexOf(a);
+                    var bi = order.indexOf(b);
+                    return (ai >= 0 ? ai : 99) - (bi >= 0 ? bi : 99);
+                });
+
+                sortedTransports.forEach(function(transport) {
+                    var header = document.createElement('div');
+                    header.className = 'model-transport-header';
+                    header.textContent = transport.charAt(0).toUpperCase() + transport.slice(1);
+                    itemsEl.appendChild(header);
+
+                    groups[transport].forEach(function(m) {
+                        var row = document.createElement('div');
+                        row.className = 'model-row';
+                        var provider = (m.provider || '').replace('browser/', '').replace('api/', '').replace('agent/', '') || '—';
+                        var enabled = m.metadata && m.metadata.enabled !== false;
+                        row.innerHTML = '<span class="model-row-id">' + esc(m.id) + '</span>'
+                            + '<span class="model-row-transport">' + esc(transport) + '</span>'
+                            + '<span class="model-row-provider">' + esc(provider) + '</span>'
+                            + '<span class="model-row-status ' + (enabled ? 'on' : 'off') + '">' + (enabled ? '●' : '○') + '</span>';
+                        itemsEl.appendChild(row);
+                    });
+                });
+
+                loadingEl.style.display = 'none';
+                listEl.style.display = 'block';
+            } catch (err) {
+                console.error('Failed to load models:', err);
+                loadingEl.style.display = 'none';
+                errorEl.style.display = 'block';
+            }
+        })();
+
+        function esc(text) {
+            var d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+    })();
+    </script>
+</body>
+</html>

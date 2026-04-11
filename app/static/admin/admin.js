@@ -117,7 +117,7 @@
                 throw new Error('Invalid token');
             }
         } catch (err) {
-            loginError.textContent = err.message || 'Login failed';
+            loginError.textContent = err.message || 'Ошибка входа';
             loginError.classList.remove('hidden');
         } finally {
             loginBtn.textContent = 'Sign In';
@@ -726,7 +726,7 @@
         if (!prompt.trim()) { alert('Please enter a prompt'); return; }
 
         btn.disabled = true;
-        btn.textContent = 'Running...';
+        btn.textContent = 'Выполняется…';
         resultDiv.classList.add('hidden');
 
         try {
@@ -742,7 +742,7 @@
             resultDiv.classList.remove('hidden');
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Run Prompt';
+            btn.textContent = 'Запустить';
         }
     }
 
@@ -757,7 +757,7 @@
         if (!prompt.trim()) { alert('Please enter a prompt'); return; }
 
         btn.disabled = true;
-        btn.textContent = 'Running...';
+        btn.textContent = 'Выполняется…';
         resultDiv.classList.add('hidden');
 
         try {
@@ -773,7 +773,7 @@
             resultDiv.classList.remove('hidden');
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Run Comparison';
+            btn.textContent = 'Сравнить';
         }
     }
 
@@ -797,8 +797,8 @@
                 const el = document.getElementById(id);
                 if (el) el.textContent = (val && val.length) ? JSON.stringify(val, null, 2) : fallback;
             };
-            setJson('analytics-top-models', data.top_models, 'No data yet — make some requests first');
-            setJson('analytics-top-providers', data.top_providers, 'No data yet');
+            setJson('analytics-top-models', data.top_models, 'Нет данных — сделайте запросы');
+            setJson('analytics-top-providers', data.top_providers, 'Нет данных');
             setJson('analytics-errors', data.error_summary, 'No errors');
             setJson('analytics-fallbacks-detail', data.fallback_summary ? [data.fallback_summary] : null, 'No fallbacks');
         } catch (e) {
@@ -1183,7 +1183,7 @@
         if (refreshAllBtn) refreshAllBtn.addEventListener('click', async () => {
             if (!confirm('Run baseline refresh for ALL providers? This may take a while.')) return;
             refreshAllBtn.disabled = true;
-            refreshAllBtn.textContent = 'Running...';
+            refreshAllBtn.textContent = 'Выполняется…';
             try {
                 await fetchApi('/dom-refresh/run-all', { method: 'POST' });
                 loadBaseline();

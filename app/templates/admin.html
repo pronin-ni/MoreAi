@@ -43,26 +43,26 @@
         <header class="dashboard-header">
             <h1 class="dashboard-logo">MoreAI <span class="badge">Admin</span></h1>
             <nav class="dashboard-nav">
-                <button class="nav-tab active" data-tab="overview">Overview</button>
-                <button class="nav-tab" data-tab="Providers">Providers</button>
-                <button class="nav-tab" data-tab="Models">Models</button>
-                <button class="nav-tab" data-tab="Health">Health</button>
-                <button class="nav-tab" data-tab="Actions">Actions</button>
-                <button class="nav-tab" data-tab="Sandbox">Sandbox</button>
-                <button class="nav-tab" data-tab="Analytics">Analytics</button>
-                <button class="nav-tab" data-tab="Canary">Canary</button>
-                <button class="nav-tab" data-tab="Healing">Healing</button>
-                <button class="nav-tab" data-tab="Recon">Recon</button>
-                <button class="nav-tab" data-tab="Baseline">Baseline</button>
-                <button class="nav-tab" data-tab="Maintenance">Maintenance</button>
-                <button class="nav-tab" data-tab="Config">Config</button>
-                <button class="nav-tab" data-tab="Pipelines">Pipelines</button>
-                <button class="nav-tab" data-tab="Scoring">Scoring</button>
-                <button class="nav-tab" data-tab="Trends">Trends</button>
+                <button class="nav-tab active" data-tab="overview">Обзор</button>
+                <button class="nav-tab" data-tab="Providers">Провайдеры</button>
+                <button class="nav-tab" data-tab="Models">Модели</button>
+                <button class="nav-tab" data-tab="Health">Здоровье</button>
+                <button class="nav-tab" data-tab="Actions">Действия</button>
+                <button class="nav-tab" data-tab="Sandbox">Песочница</button>
+                <button class="nav-tab" data-tab="Analytics">Аналитика</button>
+                <button class="nav-tab" data-tab="Canary">Канарейка</button>
+                <button class="nav-tab" data-tab="Healing">Восстановление</button>
+                <button class="nav-tab" data-tab="Recon">Рекон</button>
+                <button class="nav-tab" data-tab="Baseline">Базовая</button>
+                <button class="nav-tab" data-tab="Maintenance">Обслуживание</button>
+                <button class="nav-tab" data-tab="Config">Конфиг</button>
+                <button class="nav-tab" data-tab="Pipelines">Пайплайны</button>
+                <button class="nav-tab" data-tab="Scoring">Скоринг</button>
+                <button class="nav-tab" data-tab="Trends">Тренды</button>
             </nav>
             <div class="header-actions">
-                <button id="refresh-btn" class="btn-secondary">↻ Refresh</button>
-                <button id="logout-btn" class="btn-secondary">Sign Out</button>
+                <button id="refresh-btn" class="btn-secondary">↻ Обновить</button>
+                <button id="logout-btn" class="btn-secondary">Выйти</button>
             </div>
         </header>
 
@@ -72,44 +72,44 @@
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-value" id="stat-providers">—</div>
-                        <div class="stat-label">Providers</div>
+                        <div class="stat-label">Провайдеры</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-models">—</div>
-                        <div class="stat-label">Models</div>
+                        <div class="stat-label">Модели</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-agent-models">—</div>
-                        <div class="stat-label">Agent Models</div>
+                        <div class="stat-label">Агент-модели</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-config-version">—</div>
-                        <div class="stat-label">Config Version</div>
+                        <div class="stat-label">Версия конфига</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-config-state">—</div>
-                        <div class="stat-label">Config State</div>
+                        <div class="stat-label">Состояние конфига</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-version">—</div>
-                        <div class="stat-label">Version</div>
+                        <div class="stat-label">Версия</div>
                     </div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title">System Status</h3>
-                    <pre id="system-status-json" class="json-display">Loading...</pre>
+                    <h3 class="card-title">Статус системы</h3>>
+                    <pre id="system-status-json" class="json-display">Загрузка...</pre>/pre>
                 </div>
             </div>
 
             <!-- Providers Tab -->
             <div id="tab-Providers" class="tab-content">
                 <div class="card">
-                    <h3 class="card-title">Provider Status</h3>
+                    <h3 class="card-title">Статус провайдеров</h3>>
                     <div class="table-container">
                         <table class="data-table" id="providers-table">
                             <thead>
                                 <tr>
-                                    <th>Provider</th>
+                                    <thПровайдер</th>
                                     <th>Transport</th>
                                     <th>Enabled</th>
                                     <th>Override</th>
@@ -167,7 +167,7 @@
                                     </th>
                                     <th>Model ID</th>
                                     <th>Transport</th>
-                                    <th>Provider</th>
+                                    <thПровайдер</th>
                                     <th>Enabled</th>
                                     <th>Visibility</th>
                                     <th>Available</th>
@@ -208,7 +208,7 @@
                 </div>
                 <div class="card mt-md">
                     <h3 class="card-title">Recent Failures</h3>
-                    <pre id="recent-failures-json" class="json-display">Loading...</pre>
+                    <pre id="recent-failures-json" class="json-display">Загрузка...</pre>/pre>
                 </div>
                 <div class="card mt-md">
                     <h3 class="card-title">Routing Plan Lookup</h3>
@@ -220,7 +220,7 @@
                 </div>
                 <div class="card mt-md">
                     <h3 class="card-title">Recent Routing Decisions</h3>
-                    <pre id="routing-decisions-json" class="json-display">Loading...</pre>
+                    <pre id="routing-decisions-json" class="json-display">Загрузка...</pre>/pre>
                 </div>
             </div>
 
@@ -249,7 +249,7 @@
                         Shows the computed effective config from base settings and admin overrides.
                         Green = from base, blue = overridden.
                     </p>
-                    <pre id="effective-config-json" class="json-display">Loading...</pre>
+                    <pre id="effective-config-json" class="json-display">Загрузка...</pre>/pre>
                 </div>
             </div>
 
@@ -318,23 +318,23 @@
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
-                    <h3 class="card-title">Top Models</h3>
-                    <pre id="analytics-top-models" class="json-display">Loading...</pre>
+                    <h3 class="card-title">Топ моделей</h3>>
+                    <pre id="analytics-top-models" class="json-display">Загрузка...</pre>/pre>
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
-                    <h3 class="card-title">Top Providers</h3>
-                    <pre id="analytics-top-providers" class="json-display">Loading...</pre>
+                    <h3 class="card-title">Топ провайдеров</h3>>
+                    <pre id="analytics-top-providers" class="json-display">Загрузка...</pre>/pre>
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Error Summary</h3>
-                    <pre id="analytics-errors" class="json-display">Loading...</pre>
+                    <pre id="analytics-errors" class="json-display">Загрузка...</pre>/pre>
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Fallback Summary</h3>
-                    <pre id="analytics-fallbacks-detail" class="json-display">Loading...</pre>
+                    <pre id="analytics-fallbacks-detail" class="json-display">Загрузка...</pre>/pre>
                 </div>
             </div>
 
@@ -381,12 +381,12 @@
 
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Active Canaries</h3>
-                    <pre id="canary-active" class="json-display">Loading...</pre>
+                    <pre id="canary-active" class="json-display">Загрузка...</pre>/pre>
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Canary History</h3>
-                    <pre id="canary-history-list" class="json-display">Loading...</pre>
+                    <pre id="canary-history-list" class="json-display">Загрузка...</pre>/pre>
                 </div>
             </div>
 
@@ -418,18 +418,18 @@
                         <table class="healing-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.5rem; text-align: left;">Role</th>
                                     <th style="padding: 0.5rem; text-align: center;">Health</th>
                                     <th style="padding: 0.5rem; text-align: center;">Status</th>
                                     <th style="padding: 0.5rem; text-align: center;">Primary</th>
-                                    <th style="padding: 0.5rem; text-align: center;">Fallback</th>
+                                    <th style="padding: 0.5rem; text-align: center;"Fallback</th>
                                     <th style="padding: 0.5rem; text-align: center;">Healing</th>
-                                    <th style="padding: 0.5rem; text-align: center;">Confidence</th>
+                                    <th style="padding: 0.5rem; text-align: center;"Уверенность</th>
                                 </tr>
                             </thead>
                             <tbody id="healing-health-tbody">
-                                <tr><td colspan="8" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="8" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -437,12 +437,12 @@
 
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Healed Locator Cache</h3>
-                    <pre id="healing-cache" class="json-display">Loading...</pre>
+                    <pre id="healing-cache" class="json-display">Загрузка...</pre>/pre>
                 </div>
 
                 <div class="card" style="margin-top: 1rem;">
                     <h3 class="card-title">Recent Healing Candidates</h3>
-                    <pre id="healing-candidates" class="json-display">Loading...</pre>
+                    <pre id="healing-candidates" class="json-display">Загрузка...</pre>/pre>
                 </div>
             </div>
 
@@ -467,7 +467,7 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="recon-success-rate">—</div>
-                        <div class="stat-label">Success Rate</div>
+                        <div class="stat-label"Успешность</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="recon-avg-duration">—</div>
@@ -481,7 +481,7 @@
                         <table class="recon-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.5rem; text-align: center;">Attempts</th>
                                     <th style="padding: 0.5rem; text-align: center;">Success Rate</th>
                                     <th style="padding: 0.5rem; text-align: center;">Partials</th>
@@ -491,7 +491,7 @@
                                 </tr>
                             </thead>
                             <tbody id="recon-provider-tbody">
-                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -503,7 +503,7 @@
                         <table class="recon-events-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.4rem; text-align: left;">Trigger</th>
                                     <th style="padding: 0.4rem; text-align: center;">Result</th>
                                     <th style="padding: 0.4rem; text-align: center;">Duration</th>
@@ -512,7 +512,7 @@
                                 </tr>
                             </thead>
                             <tbody id="recon-events-tbody">
-                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -554,12 +554,12 @@
                         <table class="baseline-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.5rem; text-align: left;">Roles</th>
                                 </tr>
                             </thead>
                             <tbody id="baseline-coverage-tbody">
-                                <tr><td colspan="2" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="2" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -571,14 +571,14 @@
                         <table class="drift-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.4rem; text-align: left;">Role</th>
                                     <th style="padding: 0.4rem; text-align: center;">Severity</th>
                                     <th style="padding: 0.4rem; text-align: left;">Summary</th>
                                 </tr>
                             </thead>
                             <tbody id="drift-events-tbody">
-                                <tr><td colspan="4" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="4" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -590,7 +590,7 @@
                         <table class="refresh-status-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.5rem; text-align: center;">Attempts</th>
                                     <th style="padding: 0.5rem; text-align: center;">Successes</th>
                                     <th style="padding: 0.5rem; text-align: center;">Last Result</th>
@@ -598,7 +598,7 @@
                                 </tr>
                             </thead>
                             <tbody id="refresh-status-tbody">
-                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -613,7 +613,7 @@
                         <table class="refresh-events-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.4rem; text-align: center;">Status</th>
                                     <th style="padding: 0.4rem; text-align: center;">Duration</th>
                                     <th style="padding: 0.4rem; text-align: center;">Updates</th>
@@ -675,16 +675,16 @@
                         <table class="suggestions-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.5rem; text-align: left;">Role</th>
                                     <th style="padding: 0.5rem; text-align: left;">Suggested</th>
-                                    <th style="padding: 0.5rem; text-align: center;">Confidence</th>
+                                    <th style="padding: 0.5rem; text-align: center;"Уверенность</th>
                                     <th style="padding: 0.5rem; text-align: center;">Times</th>
                                     <th style="padding: 0.5rem; text-align: center;">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="suggestions-tbody">
-                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="6" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -696,7 +696,7 @@
                         <table class="overrides-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.5rem; text-align: left;">Provider</th>
+                                    <th style="padding: 0.5rem; text-align: left;"Провайдер</th>
                                     <th style="padding: 0.5rem; text-align: left;">Role</th>
                                     <th style="padding: 0.5rem; text-align: left;">Override Selector</th>
                                     <th style="padding: 0.5rem; text-align: center;">Source</th>
@@ -704,7 +704,7 @@
                                 </tr>
                             </thead>
                             <tbody id="overrides-tbody">
-                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="5" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -715,7 +715,7 @@
             <div id="tab-Scoring" class="tab-content">
                 <div class="card">
                     <div class="card-header">
-                        <h3 class="card-title">Stage Scoring Breakdown</h3>
+                        <h3 class="card-title">Расчёт скоринга этапов</h3>>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
                             <select id="scoring-role-select" onchange="loadScoringData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
                                 <option value="generate">generate</option>
@@ -725,31 +725,31 @@
                                 <option value="verify">verify</option>
                                 <option value="transform">transform</option>
                             </select>
-                            <button class="btn-secondary" onclick="loadScoringData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                            <button class="btn-secondary" onclick="loadScoringData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Обновить</button>
                         </div>
                     </div>
                     <div style="overflow-x: auto;">
                         <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
-                                    <th style="padding: 0.4rem; text-align: left;">Provider</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Base</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Dynamic</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Quality</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Q Adj</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Penalty</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Success</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Fallback</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Samples</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Confidence</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Badges</th>
-                                    <th style="padding: 0.4rem; text-align: left;">Tags</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Модель</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Провайдер</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Оценка</th>
+                                    <th style="padding: 0.4rem; text-align: center;"База</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Динамика</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Качество</th>
+                                    <th style="padding: 0.4rem; text-align: center;">th>Δ Оценка</th>/th>
+                                    <th style="padding: 0.4rem; text-align: center;"Штраф</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Успех</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Fallback</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Примеры</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Уверенность</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Бейджи</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Теги</th>
                                 </tr>
                             </thead>
                             <tbody id="scoring-tbody">
-                                <tr><td colspan="14" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="14" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -762,29 +762,29 @@
                 <div class="stats-grid" id="trend-stats-grid">
                     <div class="stat-card">
                         <div class="stat-value" id="trend-improvers-count">—</div>
-                        <div class="stat-label">Improving Models</div>
+                        <div class="stat-label">Улучшающиеся</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="trend-decliners-count">—</div>
-                        <div class="stat-label">Declining Models</div>
+                        <div class="stat-label">Ухудшающиеся</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="trend-unstable-count">—</div>
-                        <div class="stat-label">Unstable Models</div>
+                        <div class="stat-label">Нестабильные</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="trend-stable-count">—</div>
-                        <div class="stat-label">Stable Models</div>
+                        <div class="stat-label">Стабильные</div>
                     </div>
                 </div>
 
                 <!-- Controls -->
                 <div class="card" style="margin-top: 1rem;">
                     <div class="card-header">
-                        <h3 class="card-title">Trend Controls</h3>
+                        <h3 class="card-title">Управление трендами</h3>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
                             <select id="trends-role-select" onchange="loadTrendsData()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
-                                <option value="">All Roles</option>
+                                <option value="">Все роли</option>
                                 <option value="generate">generate</option>
                                 <option value="review">review</option>
                                 <option value="critique">critique</option>
@@ -797,8 +797,8 @@
                                 <option value="1h">1h</option>
                                 <option value="7d">7d</option>
                             </select>
-                            <button class="btn-secondary" onclick="loadTrendsData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
-                            <button class="btn-secondary" onclick="triggerSnapshot()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">📸 Capture Snapshot</button>
+                            <button class="btn-secondary" onclick="loadTrendsData()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Обновить</button>
+                            <button class="btn-secondary" onclick="triggerSnapshot()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">📸 Сделать снимок</button>
                         </div>
                     </div>
                 </div>
@@ -812,9 +812,9 @@
                         <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Модель</th>
                                     <th style="padding: 0.4rem; text-align: left;">Role</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Оценка</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
@@ -824,7 +824,7 @@
                                 </tr>
                             </thead>
                             <tbody id="improvers-tbody">
-                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -839,9 +839,9 @@
                         <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Модель</th>
                                     <th style="padding: 0.4rem; text-align: left;">Role</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Оценка</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
@@ -851,7 +851,7 @@
                                 </tr>
                             </thead>
                             <tbody id="decliners-tbody">
-                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -866,9 +866,9 @@
                         <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Модель</th>
                                     <th style="padding: 0.4rem; text-align: left;">Role</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Оценка</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
@@ -878,7 +878,7 @@
                                 </tr>
                             </thead>
                             <tbody id="unstable-tbody">
-                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="9" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -887,16 +887,16 @@
                 <!-- Full Trend Table -->
                 <div class="card" style="margin-top: 1rem;">
                     <div class="card-header">
-                        <h3 class="card-title">All Trends</h3>
+                        <h3 class="card-title">Все тренды</h3>
                     </div>
                     <div style="overflow-x: auto;">
                         <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
                             <thead>
                                 <tr style="border-bottom: 1px solid var(--admin-border);">
-                                    <th style="padding: 0.4rem; text-align: left;">Model</th>
+                                    <th style="padding: 0.4rem; text-align: left;"Модель</th>
                                     <th style="padding: 0.4rem; text-align: left;">Role</th>
                                     <th style="padding: 0.4rem; text-align: center;">Status</th>
-                                    <th style="padding: 0.4rem; text-align: center;">Score</th>
+                                    <th style="padding: 0.4rem; text-align: center;"Оценка</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Score</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Success</th>
                                     <th style="padding: 0.4rem; text-align: center;">Δ Fallback</th>
@@ -906,7 +906,7 @@
                                 </tr>
                             </thead>
                             <tbody id="trends-tbody">
-                                <tr><td colspan="10" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="10" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -919,27 +919,27 @@
                 <div class="stats-grid" id="pipeline-stats-grid">
                     <div class="stat-card">
                         <div class="stat-value" id="pl-stat-total">—</div>
-                        <div class="stat-label">Total Pipelines</div>
+                        <div class="stat-label"Общее количество пайплайнов</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="pl-stat-enabled">—</div>
-                        <div class="stat-label">Enabled</div>
+                        <div class="stat-label"Активные</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="pl-stat-executions">—</div>
-                        <div class="stat-label">Recent Executions</div>
+                        <div class="stat-label"Последние выполнения</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="pl-stat-success">—</div>
-                        <div class="stat-label">Success Rate</div>
+                        <div class="stat-label"Успешность</div>
                     </div>
                 </div>
 
                 <!-- Pipeline Definitions Table -->
                 <div class="card" style="margin-top: 1rem;">
                     <div class="card-header">
-                        <h3 class="card-title">Pipeline Definitions</h3>
-                        <button class="btn-secondary" onclick="loadPipelineDefinitions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                        <h3 class="card-title">Определения пайплайнов</h3>>
+                        <button class="btn-secondary" onclick="loadPipelineDefinitions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Обновить</button>
                     </div>
                     <div style="overflow-x: auto;">
                         <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
@@ -955,7 +955,7 @@
                                 </tr>
                             </thead>
                             <tbody id="pl-definitions-tbody">
-                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Loading...</td></tr>
+                                <tr><td colspan="7" style="padding: 1rem; text-align: center;">Загрузка...</pre>/td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -967,7 +967,7 @@
                         <h3 class="card-title">Recent Executions</h3>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
                             <select id="pl-exec-pipeline-filter" onchange="loadRecentExecutions()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
-                                <option value="">All Pipelines</option>
+                                <option value="">Все пайплайны</option>
                             </select>
                             <select id="pl-exec-status-filter" onchange="loadRecentExecutions()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-bg); color: var(--admin-text);">
                                 <option value="">All Status</option>
@@ -975,7 +975,7 @@
                                 <option value="failed">Failed</option>
                                 <option value="partial">Partial</option>
                             </select>
-                            <button class="btn-secondary" onclick="loadRecentExecutions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Refresh</button>
+                            <button class="btn-secondary" onclick="loadRecentExecutions()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">↻ Обновить</button>
                         </div>
                     </div>
                     <div style="overflow-x: auto;">
