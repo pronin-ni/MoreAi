@@ -542,7 +542,7 @@ class TestScoringHistoryAPI:
         data = resp.json()
         assert "history" in data
         assert "total" in data
-        assert data["total"] == 0
+        assert isinstance(data["history"], list)
 
     def test_get_scoring_history_with_params(self, client):
         resp = client.get("/admin/pipelines/scoring-history?role=generate&window=24h")

@@ -3,6 +3,11 @@ Built-in pipeline definitions.
 
 Declares the default Chain-of-Providers pipelines that ship with MoreAI.
 Each pipeline is a data-driven definition — no giant if/else logic.
+
+All stages use selection_policy (intelligent dynamic selection)
+instead of hardcoded target_model. The intelligence layer picks the
+best available candidate at runtime based on availability, latency,
+stability, quality scores, and capability tags.
 """
 
 from app.pipeline.types import (
@@ -13,6 +18,59 @@ from app.pipeline.types import (
     PipelineStage,
     StageRole,
 )
+
+# ── Selection policy templates ──
+# These define the intent for each stage type.
+
+_GENERATE_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["fast", "stable"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.4,
+    "max_latency_s": 60.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
+
+_REVIEW_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["review_strong", "reasoning_strong", "stable"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.4,
+    "max_latency_s": 90.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
+
+_REFINE_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["stable", "reasoning_strong"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.4,
+    "max_latency_s": 90.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
+
+_CRITIQUE_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["review_strong", "reasoning_strong"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.4,
+    "max_latency_s": 90.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
+
+_VERIFY_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["stable", "review_strong"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.5,
+    "max_latency_s": 60.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
 
 # ── generate-review-refine ──
 # Stage 1: generate a draft answer
@@ -35,7 +93,7 @@ GENERATE_REVIEW_REFINE = PipelineDefinition(
         PipelineStage(
             stage_id="draft",
             role=StageRole.GENERATE,
-            target_model="qwen",
+            selection_policy=_GENERATE_POLICY,
             output_mode=OutputMode.PLAIN_TEXT,
             failure_policy=FailurePolicy.FAIL_ALL,
             max_retries=1,
@@ -44,7 +102,7 @@ GENERATE_REVIEW_REFINE = PipelineDefinition(
         PipelineStage(
             stage_id="review",
             role=StageRole.REVIEW,
-            target_model="glm",
+            selection_policy=_REVIEW_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=True,
@@ -65,7 +123,7 @@ GENERATE_REVIEW_REFINE = PipelineDefinition(
         PipelineStage(
             stage_id="refine",
             role=StageRole.REFINE,
-            target_model="qwen",
+            selection_policy=_REFINE_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=True,
@@ -88,7 +146,7 @@ GENERATE_REVIEW_REFINE = PipelineDefinition(
 )
 
 # ── generate-critique-regenerate ──
-# Stage 1: initial response from model A
+# Stage 1: initial responses from model A
 # Stage 2: structured critique from model B
 # Stage 3: regenerate from model C incorporating the critique
 
@@ -108,7 +166,7 @@ GENERATE_CRITIQUE_REGENERATE = PipelineDefinition(
         PipelineStage(
             stage_id="initial",
             role=StageRole.GENERATE,
-            target_model="kimi",
+            selection_policy=_GENERATE_POLICY,
             output_mode=OutputMode.PLAIN_TEXT,
             failure_policy=FailurePolicy.FAIL_ALL,
             max_retries=1,
@@ -117,7 +175,7 @@ GENERATE_CRITIQUE_REGENERATE = PipelineDefinition(
         PipelineStage(
             stage_id="critique",
             role=StageRole.CRITIQUE,
-            target_model="glm",
+            selection_policy=_CRITIQUE_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=True,
@@ -137,7 +195,7 @@ GENERATE_CRITIQUE_REGENERATE = PipelineDefinition(
         PipelineStage(
             stage_id="regenerate",
             role=StageRole.GENERATE,
-            target_model="kimi",
+            selection_policy=_GENERATE_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=False,
@@ -179,7 +237,7 @@ DRAFT_VERIFY_FINALIZE = PipelineDefinition(
         PipelineStage(
             stage_id="draft",
             role=StageRole.GENERATE,
-            target_model="qwen",
+            selection_policy=_GENERATE_POLICY,
             output_mode=OutputMode.PLAIN_TEXT,
             failure_policy=FailurePolicy.FAIL_ALL,
             max_retries=1,
@@ -188,7 +246,7 @@ DRAFT_VERIFY_FINALIZE = PipelineDefinition(
         PipelineStage(
             stage_id="verify",
             role=StageRole.VERIFY,
-            target_model="glm",
+            selection_policy=_VERIFY_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=True,
@@ -208,7 +266,7 @@ DRAFT_VERIFY_FINALIZE = PipelineDefinition(
         PipelineStage(
             stage_id="finalize",
             role=StageRole.REFINE,
-            target_model="qwen",
+            selection_policy=_REFINE_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=True,

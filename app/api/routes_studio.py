@@ -4,10 +4,10 @@ Studio UI routes.
 Provides a product-facing "smart chat" interface with pipeline awareness.
 Separate from /ui — /ui remains the simple HTMX chat.
 
-Endpoints:
-- GET /studio — renders the studio page
-- POST /studio/chat — sends a message, executes model or pipeline
-- GET /studio/executions/{execution_id} — execution details for expandable view
+Studio modes are POLICY-driven, not model-driven:
+- Fast/Balanced use the intelligence layer to select the best available
+  candidate at runtime (availability, latency, stability, quality).
+- Quality/Review/Deep use pipelines with dynamic stage selection.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any
 
 import bleach
 from fastapi import APIRouter, Form, Request
@@ -23,9 +22,9 @@ from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.api.routes_ui import render_markdown
+from app.api.studio_modes import STUDIO_MODE_POLICIES, get_mode_policy, get_selection_policy
 from app.core.logging import get_logger
 from app.schemas.openai import ChatCompletionRequest, ChatMessage
-from app.services.chat_proxy_service import service
 
 logger = get_logger(__name__)
 
@@ -44,55 +43,6 @@ def _render_template(name: str, **context: object) -> str:
     return tmpl.render(**context)
 
 
-# ── Mode mapping ──
-
-# Product-facing modes → backend strategy
-# Each mode maps to either a single model or a pipeline_id.
-# Users never see raw "pipeline/..." IDs.
-
-STUDIO_MODES: dict[str, dict] = {
-    "fast": {
-        "label": "Fast",
-        "description": "Quick response from the fastest available model",
-        "type": "model",
-        "model": "kimi",  # Fast model by convention
-    },
-    "balanced": {
-        "label": "Balanced",
-        "description": "Default model — good speed and quality",
-        "type": "model",
-        "model": "qwen",  # Default model
-    },
-    "quality": {
-        "label": "Quality",
-        "description": "Generate → Review → Refine pipeline for higher quality",
-        "type": "pipeline",
-        "pipeline_id": "generate-review-refine",
-    },
-    "review": {
-        "label": "Review",
-        "description": "Generate → Critique → Regenerate — deep analysis mode",
-        "type": "pipeline",
-        "pipeline_id": "generate-critique-regenerate",
-    },
-    "deep": {
-        "label": "Deep",
-        "description": "Draft → Verify → Finalize — thorough fact-checked response",
-        "type": "pipeline",
-        "pipeline_id": "draft-verify-finalize",
-    },
-}
-
-
-def _resolve_mode(mode: str) -> dict:
-    """Resolve a studio mode to its backend strategy.
-
-    Returns a dict with type, model/pipeline_id, and metadata.
-    Falls back to 'balanced' for unknown modes.
-    """
-    return STUDIO_MODES.get(mode, STUDIO_MODES["balanced"])
-
-
 # ── Routes ──
 
 
@@ -104,11 +54,11 @@ async def studio_page():
 
     # Get available modes
     modes = []
-    for mode_key, mode_config in STUDIO_MODES.items():
-        is_pipeline = mode_config["type"] == "pipeline"
+    for mode_key, mode_config in STUDIO_MODE_POLICIES.items():
+        is_pipeline = mode_config.get("is_pipeline", False)
         available = True
         if is_pipeline:
-            p_def = pipeline_registry.get(mode_config["pipeline_id"])
+            p_def = pipeline_registry.get(mode_config.get("pipeline_id", ""))
             available = p_def is not None and p_def.enabled if p_def else False
 
         modes.append({
@@ -129,7 +79,7 @@ async def studio_page():
         browser_models=browser_models,
         api_models=api_models,
         agent_models=agent_models,
-        STUDIO_MODES={k: {"label": v["label"], "isPipeline": v["type"] == "pipeline"} for k, v in STUDIO_MODES.items()},
+        STUDIO_MODES={k: {"label": v["label"], "isPipeline": v["is_pipeline"]} for k, v in STUDIO_MODE_POLICIES.items()},
     ))
 
 
@@ -145,8 +95,9 @@ async def studio_chat(
 ):
     """Process a studio chat message.
 
-    Resolves the mode to either a single model or a pipeline,
-    executes the request, and returns HTML partials with execution metadata.
+    For non-pipeline modes: uses the intelligence layer to select the
+    best available candidate at runtime, with bounded fallback.
+    For pipeline modes: executes the pipeline with dynamic stage selection.
     """
     # Handle clear action
     if action == "clear":
@@ -170,264 +121,390 @@ async def studio_chat(
     conversation = _safe_parse_json(conversation_json)
 
     # Resolve mode to backend strategy
-    mode_config = _resolve_mode(mode)
+    policy = get_mode_policy(mode)
+    is_pipeline = policy.get("is_pipeline", False)
+    pipeline_id = policy.get("pipeline_id", "")
 
-    # Determine what to execute
-    execution_type = mode_config["type"]  # "model" or "pipeline"
-    target_model = ""
-    pipeline_id = ""
-
+    # Advanced mode: user selected specific model (explicit override)
     if advanced_type == "custom_model" and advanced_model:
-        # Advanced: user selected a specific model
-        target_model = advanced_model
-        execution_type = "model"
-    elif execution_type == "pipeline":
-        pipeline_id = mode_config["pipeline_id"]
-        target_model = f"pipeline/{pipeline_id}"
-    else:
-        target_model = mode_config["model"]
+        return await _execute_studio_single_model(
+            conversation, advanced_model, mode, request,
+        )
 
-    # Append user message
-    user_msg = {
-        "role": "user",
-        "content": message,
-        "timestamp": time.time(),
-    }
-    conversation.append(user_msg)
+    if is_pipeline:
+        return await _execute_studio_pipeline(
+            conversation, pipeline_id, mode, request,
+        )
 
-    # Build request
-    messages = [ChatMessage(**m) for m in conversation if m.get("role") in ("user", "assistant")]
-    chat_request = ChatCompletionRequest(
-        model=target_model,
-        messages=messages,
-        stream=False,
+    # Single-model mode: use intelligence layer for selection
+    return await _execute_studio_intelligent(
+        conversation, mode, request,
     )
 
-    request_id = f"studio-{uuid.uuid4().hex[:8]}"
-    execution_id = request_id  # Use request_id as execution_id for studio
-    execution_summary: dict = {
-        "execution_id": execution_id,
-        "mode": mode,
-        "execution_type": execution_type,
-        "target_model": target_model,
-        "pipeline_id": pipeline_id,
-        "stage_count": 0,
-        "selected_models": [],
-        "fallback_count": 0,
-        "quality_score": 0.0,
-        "duration_ms": 0.0,
-        "status": "success",
-        "error": "",
-    }
 
+async def _execute_studio_intelligent(
+    conversation: list[dict],
+    mode: str,
+    request: Request,
+) -> HTMLResponse:
+    """Execute using intelligence-layer candidate selection.
+
+    Uses ModelSelector to rank ALL available models by the mode's
+    SelectionPolicy, picks the best, and falls back on failure.
+    """
+    from app.intelligence.selection import model_selector
+    from app.intelligence.types import SelectionPolicy, StageRole
+
+    # Get mode's selection policy
+    sel_policy_dict = get_selection_policy(mode)
+    if not sel_policy_dict:
+        # Fallback to balanced defaults
+        sel_policy_dict = {
+            "preferred_models": [],
+            "avoid_tags": [],
+            "min_availability": 0.3,
+            "max_latency_s": 60.0,
+            "fallback_mode": "next_best",
+            "max_fallback_attempts": 3,
+        }
+
+    sel_policy = SelectionPolicy(**sel_policy_dict)
+
+    # Use ModelSelector to rank all candidates for "generate" role
+    selection_trace = model_selector.select_for_stage(
+        stage_id="studio",
+        stage_role=StageRole.GENERATE,
+        policy=sel_policy,
+    )
+
+    # Extract ranked candidates (exclude excluded ones for primary)
+    viable = [c for c in selection_trace.all_candidates if not c.is_excluded]
+    if not viable:
+        # Fall back to including excluded candidates as last resort
+        viable = selection_trace.all_candidates
+
+    if not viable:
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={
+                "status": "error",
+                "error": "No viable candidates available",
+            },
+            status="error",
+            error_message="No models available. Check provider health in Admin.",
+        )
+
+    # Build messages
+    messages = [ChatMessage(**m) for m in conversation if m.get("role") in ("user", "assistant")]
+
+    request_id = f"studio-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
 
-    try:
-        if execution_type == "pipeline":
-            # Execute via pipeline executor
-            from app.pipeline.executor import pipeline_executor
-            from app.pipeline.types import pipeline_registry
+    # Try candidates with bounded fallback
+    max_attempts = sel_policy.max_fallback_attempts
+    response = None
+    fallback_count = 0
+    fallback_records: list[dict] = []
+    last_error = None
+    used_model = ""
+    used_provider = ""
 
-            p_def = pipeline_registry.get(pipeline_id)
-            if p_def is None:
-                raise ValueError(f"Pipeline '{pipeline_id}' not found")
+    for attempt_idx, candidate in enumerate(viable):
+        if attempt_idx > max_attempts:
+            break
 
-            response = await pipeline_executor.execute(p_def, chat_request, request_id)
+        chat_request = ChatCompletionRequest(
+            model=candidate.model_id,
+            messages=messages,
+            stream=False,
+        )
 
-            # Extract execution metadata
-            execution_summary["stage_count"] = len(p_def.stages)
-            execution_summary["selected_models"] = list({
-                s.target_model for s in p_def.stages if s.target_model
-            })
-        else:
-            # Execute via chat proxy service (single model)
-            response = await service.process_completion(chat_request, request_id)
-            execution_summary["stage_count"] = 1
-            execution_summary["selected_models"] = [target_model]
-
-        elapsed_ms = (time.monotonic() - started) * 1000
-        execution_summary["duration_ms"] = round(elapsed_ms, 1)
-
-        # Extract response content
-        content = ""
-        if response.choices:
-            content = response.choices[0].message.content or ""
-
-        # Append assistant response
-        assistant_msg = {
-            "role": "assistant",
-            "content": content,
-            "timestamp": time.time(),
-        }
-        conversation.append(assistant_msg)
-
-        # Append assistant response
-        render_messages = _build_render_messages(conversation)
-
-        # Try to get quality score from execution context
         try:
-            from app.pipeline.observability.scoring_history import scoring_history_store
-            # Try to find recent quality data for this model
-            for m in execution_summary["selected_models"]:
-                hist = scoring_history_store.get_history(model_id=m, limit=1)
-                if hist:
-                    execution_summary["quality_score"] = round(hist[0].final_score, 2)
-                    break
-        except Exception:
-            pass
+            from app.services.chat_proxy_service import service as proxy_service
+            response = await proxy_service.process_completion(chat_request, request_id)
+            used_model = candidate.model_id
+            used_provider = candidate.provider_id
+            break
 
+        except Exception as exc:
+            last_error = exc
+            error_msg = str(exc)
+            logger.warning(
+                "studio_intelligent_candidate_failed",
+                request_id=request_id,
+                candidate=candidate.model_id,
+                provider=candidate.provider_id,
+                score=round(candidate.final_score, 3),
+                error=error_msg[:200],
+            )
+
+            fallback_records.append({
+                "failed_model": candidate.model_id,
+                "failed_provider": candidate.provider_id,
+                "score": round(candidate.final_score, 3),
+                "reason": _classify_fallback_reason(error_msg),
+            })
+
+            if attempt_idx + 1 <= max_attempts:
+                fallback_count += 1
+                continue
+            else:
+                break
+
+    elapsed_ms = (time.monotonic() - started) * 1000
+
+    # ── Build execution summary ──
+    execution_summary = _build_intelligent_execution_summary(
+        mode, sel_policy_dict, viable[0] if viable else None,
+        used_model, used_provider, fallback_count, fallback_records,
+        elapsed_ms, response, conversation, request_id,
+    )
+
+    if response:
         return _render_studio_response(
-            messages=render_messages,
+            messages=_build_render_messages(conversation),
             conversation=conversation,
             mode=mode,
             execution=execution_summary,
             status="success",
         )
 
-    except Exception as exc:
-        elapsed_ms = (time.monotonic() - started) * 1000
-        execution_summary["duration_ms"] = round(elapsed_ms, 1)
-        execution_summary["status"] = "error"
-        execution_summary["error"] = str(exc)
+    # All candidates failed
+    error_text = str(last_error) if last_error else "Unknown error"
+    error_summary = error_text[:300] if len(error_text) > 300 else error_text
+    candidate_list = ", ".join(c.model_id for c in viable[:5])
 
-        logger.exception("studio_chat_error", request_id=request_id, error=str(exc))
+    logger.exception(
+        "studio_intelligent_all_candidates_failed",
+        request_id=request_id,
+        candidates=candidate_list,
+        fallback_count=fallback_count,
+    )
 
-        # Remove the user message since we couldn't respond
-        conversation.pop()
-
-        return _render_studio_response(
-            messages=_build_render_messages(conversation),
-            conversation=conversation,
-            mode=mode,
-            execution=execution_summary,
-            status="error",
-            error_message=str(exc),
-        )
+    return _render_studio_response(
+        messages=_build_render_messages(conversation),
+        conversation=conversation,
+        mode=mode,
+        execution=execution_summary,
+        status="error",
+        error_message=f"All models unavailable. Tried: {candidate_list}. Error: {error_summary}",
+    )
 
 
 @router.get("/studio/executions/{execution_id}")
 async def studio_execution_detail(execution_id: str):
-    """Get user-facing execution details for expandable details view.
-
-    Returns structured data suitable for the /studio details panel:
-    - execution overview (mode, duration, quality, fallbacks)
-    - per-stage breakdown with human-readable explanations
-    - fallback chain with user-friendly reasons
-    - cross-stage quality summary
-    """
+    """Get user-facing execution details for expandable details view."""
     from app.pipeline.observability.store import execution_store
 
     summary = execution_store.get(execution_id)
     if summary is None:
-        # Try persistent store
         try:
             from app.pipeline.observability.persistent_store import get_persistent_store
             persistent = get_persistent_store()
             data = persistent.get(execution_id)
             if data is None:
                 return {"error": f"Execution '{execution_id}' not found"}
-            data = _build_user_facing_details(data)
-            return data
+            return _build_user_facing_details(data)
         except Exception:
             return {"error": f"Execution '{execution_id}' not found"}
 
     return _build_user_facing_details(summary.to_dict())
 
 
-def _build_user_facing_details(data: dict) -> dict:
-    """Transform raw execution data into user-facing structured details.
+async def _execute_studio_single_model(
+    conversation: list[dict],
+    model_id: str,
+    mode: str,
+    request: Request,
+) -> HTMLResponse:
+    """Execute a specific model (advanced/manual mode)."""
+    from app.services.chat_proxy_service import service as proxy_service
 
-    Converts admin/debug format to product-facing format with
-    human-readable stage explanations, simplified fallback reasons,
-    and quality summaries.
-    """
-    stages = data.get("stages", data.get("stage_summaries", []))
-    total_fallbacks = data.get("total_fallbacks", 0)
-    total_retries = data.get("total_retries", 0)
+    messages = [ChatMessage(**m) for m in conversation if m.get("role") in ("user", "assistant")]
+    chat_request = ChatCompletionRequest(model=model_id, messages=messages, stream=False)
+    request_id = f"studio-{uuid.uuid4().hex[:8]}"
+    started = time.monotonic()
 
-    # Build user-facing stage cards
-    user_stages = []
-    for s in stages:
-        role = s.get("stage_role", s.get("role", "unknown"))
-        status = s.get("status", "unknown")
-        selection = s.get("selection_explain", {})
-        fallback_chain = selection.get("fallback_chain", []) if selection else []
-        fb_count = s.get("fallback_count", 0)
+    try:
+        response = await proxy_service.process_completion(chat_request, request_id)
+        elapsed_ms = (time.monotonic() - started) * 1000
+        content = response.choices[0].message.content if response.choices else ""
+        conversation.append({"role": "assistant", "content": content, "timestamp": time.time()})
 
-        # Human-readable stage explanation
-        explanation = _stage_explanation(role, status, fb_count)
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={
+                "execution_type": "model",
+                "target_model": model_id,
+                "used_model": model_id,
+                "used_provider": getattr(response, "_provider", ""),
+                "fallback_count": 0,
+                "duration_ms": round(elapsed_ms, 1),
+                "status": "success",
+            },
+            status="success",
+        )
+    except Exception as exc:
+        elapsed_ms = (time.monotonic() - started) * 1000
+        logger.exception("studio_single_model_failed", model=model_id)
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={
+                "execution_type": "model",
+                "target_model": model_id,
+                "used_model": model_id,
+                "fallback_count": 0,
+                "duration_ms": round(elapsed_ms, 1),
+                "status": "error",
+                "error": str(exc)[:300],
+            },
+            status="error",
+            error_message=f"Model {model_id} failed: {str(exc)[:200]}",
+        )
 
-        # Fallback details (user-friendly)
-        fallbacks = []
-        for fb in fallback_chain:
-            fallbacks.append({
-                "from_model": fb.get("failed_model", fb.get("model", "unknown")),
-                "to_model": "",  # Will be filled by next candidate
-                "reason": _user_friendly_fallback_reason(fb.get("reason", "")),
-            })
 
-        # Quality info
-        quality_score = s.get("quality_score")
-        quality_label = ""
-        if quality_score and quality_score > 0:
-            if quality_score >= 0.7:
-                quality_label = "High confidence"
-            elif quality_score >= 0.5:
-                quality_label = "Moderate confidence"
-            else:
-                quality_label = "Low confidence"
+async def _execute_studio_pipeline(
+    conversation: list[dict],
+    pipeline_id: str,
+    mode: str,
+    request: Request,
+) -> HTMLResponse:
+    """Execute a pipeline (stages use dynamic selection)."""
+    from app.pipeline.executor import pipeline_executor
+    from app.pipeline.types import pipeline_registry
 
-        user_stages.append({
-            "stage_id": s.get("stage_id", ""),
-            "role": role,
-            "role_label": _role_label(role),
-            "model": selection.get("selected_model", s.get("selected_model", "")) if selection else s.get("selected_model", ""),
-            "provider": selection.get("selected_provider", s.get("selected_provider", "")) if selection else s.get("selected_provider", ""),
-            "transport": selection.get("selected_transport", s.get("selected_transport", "")) if selection else s.get("selected_transport", ""),
-            "duration_ms": s.get("duration_ms", 0),
-            "status": status,
-            "status_label": "Completed" if status == "completed" else "Skipped" if status == "skipped" else "Failed",
-            "fallback_count": fb_count,
-            "fallbacks": fallbacks,
-            "explanation": explanation,
-            "quality_score": quality_score,
-            "quality_label": quality_label,
-            "retry_count": s.get("retry_count", 0),
-        })
+    messages = [ChatMessage(**m) for m in conversation if m.get("role") in ("user", "assistant")]
+    chat_request = ChatCompletionRequest(model=f"pipeline/{pipeline_id}", messages=messages, stream=False)
+    request_id = f"studio-{uuid.uuid4().hex[:8]}"
+    started = time.monotonic()
 
-    # Fill in "to_model" for fallback chains
-    for _i, stage in enumerate(user_stages):
-        for j, fb in enumerate(stage["fallbacks"]):
-            # The "to_model" is either the next fallback's from_model or the selected model
-            if j + 1 < len(stage["fallbacks"]):
-                fb["to_model"] = stage["fallbacks"][j + 1]["from_model"]
-            elif stage["model"]:
-                fb["to_model"] = stage["model"]
+    p_def = pipeline_registry.get(pipeline_id)
+    if p_def is None:
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={"status": "error", "error": f"Pipeline '{pipeline_id}' not found"},
+            status="error",
+            error_message=f"Pipeline '{pipeline_id}' not found",
+        )
 
-    # Cross-stage summary
-    cross_stage = _extract_cross_stage(stages)
+    try:
+        response = await pipeline_executor.execute(p_def, chat_request, request_id)
+        elapsed_ms = (time.monotonic() - started) * 1000
+        content = response.choices[0].message.content if response.choices else ""
+        conversation.append({"role": "assistant", "content": content, "timestamp": time.time()})
 
-    # Overall verdict
-    verdict = _compute_verdict(user_stages, total_fallbacks, data)
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={
+                "execution_type": "pipeline",
+                "target_model": f"pipeline/{pipeline_id}",
+                "used_model": f"pipeline/{pipeline_id}",
+                "used_provider": getattr(response, "_provider", ""),
+                "pipeline_id": pipeline_id,
+                "stage_count": len(p_def.stages),
+                "fallback_count": 0,
+                "duration_ms": round(elapsed_ms, 1),
+                "status": "success",
+            },
+            status="success",
+        )
+    except Exception as exc:
+        elapsed_ms = (time.monotonic() - started) * 1000
+        logger.exception("studio_pipeline_failed", pipeline_id=pipeline_id)
+        return _render_studio_response(
+            messages=_build_render_messages(conversation),
+            conversation=conversation,
+            mode=mode,
+            execution={
+                "execution_type": "pipeline",
+                "target_model": f"pipeline/{pipeline_id}",
+                "used_model": f"pipeline/{pipeline_id}",
+                "pipeline_id": pipeline_id,
+                "stage_count": len(p_def.stages),
+                "fallback_count": 0,
+                "duration_ms": round(elapsed_ms, 1),
+                "status": "error",
+                "error": str(exc)[:300],
+            },
+            status="error",
+            error_message=f"Pipeline '{pipeline_id}' failed: {str(exc)[:200]}",
+        )
 
-    return {
-        "execution_id": data.get("execution_id", ""),
-        "mode": data.get("mode", ""),
-        "pipeline_id": data.get("pipeline_id", ""),
-        "pipeline_display_name": data.get("pipeline_display_name", ""),
-        "status": data.get("status", "unknown"),
-        "duration_ms": data.get("duration_ms", 0),
-        "stage_count": len(user_stages),
-        "total_fallbacks": total_fallbacks,
-        "total_retries": total_retries,
-        "quality_score": data.get("quality_score", 0),
-        "stages": user_stages,
-        "cross_stage": cross_stage,
-        "verdict": verdict,
+
+# ── Helper functions ──
+
+
+def _build_intelligent_execution_summary(
+    mode: str,
+    policy_dict: dict,
+    top_candidate,
+    used_model: str,
+    used_provider: str,
+    fallback_count: int,
+    fallback_records: list[dict],
+    elapsed_ms: float,
+    response,
+    conversation: list[dict],
+    request_id: str,
+) -> dict:
+    """Build execution summary for intelligent selection mode."""
+    summary: dict = {
+        "execution_type": "model",
+        "mode_policy": mode,
+        "target_model": top_candidate.model_id if top_candidate else "",
+        "used_model": used_model,
+        "used_provider": used_provider,
+        "fallback_count": fallback_count,
+        "fallback_records": fallback_records,
+        "quality_score": 0.0,
+        "duration_ms": round(elapsed_ms, 1),
+        "status": "success" if response else "error",
+        "error": "",
     }
 
+    if response:
+        # Try to get quality score
+        try:
+            from app.pipeline.observability.scoring_history import scoring_history_store
+            for m in [used_model]:
+                hist = scoring_history_store.get_history(model_id=m, limit=1)
+                if hist:
+                    summary["quality_score"] = round(hist[0].final_score, 2)
+                    break
+        except Exception:
+            pass
 
-# ── Helpers ──
+        # Append assistant response
+        content = response.choices[0].message.content if response.choices else ""
+        conversation.append({"role": "assistant", "content": content, "timestamp": time.time()})
+
+    return summary
+
+
+def _classify_fallback_reason(error_msg: str) -> str:
+    """Classify the reason for a fallback from the error message."""
+    msg_lower = error_msg.lower()
+    if "auth" in msg_lower or "credential" in msg_lower or "login" in msg_lower:
+        return "auth_unavailable"
+    if "circuit" in msg_lower or "unavailable" in msg_lower:
+        return "provider_unavailable"
+    if "timeout" in msg_lower:
+        return "timeout"
+    if "rate" in msg_lower or "429" in msg_lower:
+        return "rate_limited"
+    if "degrad" in msg_lower:
+        return "degraded"
+    return "execution_error"
 
 
 def _render_studio_response(
@@ -438,24 +515,17 @@ def _render_studio_response(
     status: str = "success",
     error_message: str = "",
 ) -> HTMLResponse:
-    """Render the studio chat response with OOB swaps.
-
-    Updates:
-    - #studio-messages — message list
-    - #studio-execution-summary — right panel
-    - #studio-conversation-input — hidden conversation state
-    - .studio-response-state — hidden status div
-    """
-    mode_config = _resolve_mode(mode)
+    """Render the studio chat response with OOB swaps."""
+    policy = get_mode_policy(mode)
+    mode_label = policy.get("label", mode)
 
     html = _render_template(
         "partials/studio_response.html",
         messages=messages or [],
         conversation=conversation or [],
         mode=mode,
-        mode_label=mode_config["label"],
+        mode_label=mode_label,
         execution=execution or {},
-        execution_id=execution.get("execution_id", "") if execution else "",
         status=status,
         error_message=error_message,
     )
@@ -499,45 +569,24 @@ def _safe_parse_json(text: str) -> list[dict]:
         return []
 
 
-# ── User-facing detail helpers ──
-
-# Role labels for user display
-_ROLE_LABELS: dict[str, str] = {
-    "generate": "Draft",
-    "review": "Review",
-    "critique": "Critique",
-    "refine": "Refine",
-    "regenerate": "Regenerate",
-    "verify": "Verify",
-    "finalize": "Finalize",
-    "initial": "Initial draft",
-    "transform": "Transform",
-    "draft": "Draft",
-}
-
-# Stage explanations — product-friendly descriptions
-_STAGE_EXPLANATIONS: dict[str, str] = {
-    "generate": "Draft generated",
-    "review": "Answer reviewed",
-    "critique": "Deep critique completed",
-    "refine": "Final version refined",
-    "regenerate": "Answer regenerated with new perspective",
-    "verify": "Facts verified",
-    "finalize": "Final version prepared",
-    "initial": "Initial draft created",
-    "transform": "Response transformed",
-    "draft": "Draft created",
-}
-
-
-def _role_label(role: str) -> str:
-    """Return a user-friendly label for a stage role."""
-    return _ROLE_LABELS.get(role, role.capitalize())
+# ── Execution detail helpers (for /studio/executions/{id}) ──
 
 
 def _stage_explanation(role: str, status: str, fallback_count: int) -> str:
     """Return a product-friendly explanation for what the stage did."""
-    base = _STAGE_EXPLANATIONS.get(role, f"{role.capitalize()} completed")
+    labels = {
+        "generate": "Draft generated",
+        "review": "Answer reviewed",
+        "critique": "Deep critique completed",
+        "refine": "Final version refined",
+        "regenerate": "Answer regenerated with new perspective",
+        "verify": "Facts verified",
+        "finalize": "Final version prepared",
+        "initial": "Initial draft created",
+        "transform": "Response transformed",
+        "draft": "Draft created",
+    }
+    base = labels.get(role, f"{role.capitalize()} completed")
 
     if status == "skipped":
         return f"{base} (skipped)"
@@ -548,31 +597,26 @@ def _stage_explanation(role: str, status: str, fallback_count: int) -> str:
     return base
 
 
-def _user_friendly_fallback_reason(raw_reason: str) -> str:
-    """Convert technical fallback reason to user-friendly text."""
-    reason_lower = raw_reason.lower() if raw_reason else ""
-
-    if "timeout" in reason_lower or "timed out" in reason_lower:
-        return "timed out"
-    if "circuit" in reason_lower:
-        return "temporarily unavailable"
-    if "unavailable" in reason_lower or "not available" in reason_lower:
-        return "unavailable"
-    if "rate" in reason_lower:
-        return "rate limited"
-    if "degrad" in reason_lower:
-        return "degraded"
-    if "error" in reason_lower:
-        return "error occurred"
-    if "not found" in reason_lower:
-        return "not found"
-
-    return raw_reason if raw_reason else "switched model"
+def _role_label(role: str) -> str:
+    """Return a user-friendly label for a stage role."""
+    labels = {
+        "generate": "Draft",
+        "review": "Review",
+        "critique": "Critique",
+        "refine": "Refine",
+        "regenerate": "Regenerate",
+        "verify": "Verify",
+        "finalize": "Finalize",
+        "initial": "Initial draft",
+        "transform": "Transform",
+        "draft": "Draft",
+    }
+    return labels.get(role, role.capitalize())
 
 
 def _extract_cross_stage(stages: list[dict]) -> dict:
     """Extract cross-stage quality signals from stage data."""
-    result: dict[str, Any] = {}
+    result: dict[str, object] = {}
 
     for s in stages:
         cross = s.get("cross_stage", {})
@@ -627,11 +671,9 @@ def _compute_verdict(stages: list[dict], total_fallbacks: int, data: dict) -> di
     all_completed = all(s["status"] == "completed" for s in stages)
     has_fallbacks = total_fallbacks > 0
 
-    # Average quality across stages
     quality_scores = [s["quality_score"] for s in stages if s.get("quality_score") and s["quality_score"] > 0]
     avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
 
-    # Determine verdict label and message
     if not all_completed:
         label = "Completed with issues"
         message = "Some stages did not complete successfully"
@@ -655,3 +697,83 @@ def _compute_verdict(stages: list[dict], total_fallbacks: int, data: dict) -> di
         "all_completed": all_completed,
         "has_fallbacks": has_fallbacks,
     }
+
+
+def _build_user_facing_details(data: dict) -> dict:
+    """Transform raw execution data into user-facing structured details."""
+    stages = data.get("stages", data.get("stage_summaries", []))
+    total_fallbacks = data.get("total_fallbacks", 0)
+    total_retries = data.get("total_retries", 0)
+
+    user_stages = []
+    for s in stages:
+        role = s.get("stage_role", s.get("role", "unknown"))
+        status = s.get("status", "unknown")
+        selection = s.get("selection_explain", {})
+        fallback_chain = selection.get("fallback_chain", []) if selection else []
+        fb_count = s.get("fallback_count", 0)
+
+        explanation = _stage_explanation(role, status, fb_count)
+
+        fallbacks = []
+        for fb in fallback_chain:
+            fallbacks.append({
+                "from_model": fb.get("failed_model", fb.get("model", "unknown")),
+                "to_model": "",
+                "reason": _classify_fallback_reason(fb.get("reason", "")),
+            })
+
+        quality_score = s.get("quality_score")
+        quality_label = ""
+        if quality_score and quality_score > 0:
+            if quality_score >= 0.7:
+                quality_label = "High confidence"
+            elif quality_score >= 0.5:
+                quality_label = "Moderate confidence"
+            else:
+                quality_label = "Low confidence"
+
+        user_stages.append({
+            "stage_id": s.get("stage_id", ""),
+            "role": role,
+            "role_label": _role_label(role),
+            "model": selection.get("selected_model", s.get("selected_model", "")) if selection else s.get("selected_model", ""),
+            "provider": selection.get("selected_provider", s.get("selected_provider", "")) if selection else s.get("selected_provider", ""),
+            "transport": selection.get("selected_transport", s.get("selected_transport", "")) if selection else s.get("selected_transport", ""),
+            "duration_ms": s.get("duration_ms", 0),
+            "status": status,
+            "status_label": "Completed" if status == "completed" else "Skipped" if status == "skipped" else "Failed",
+            "fallback_count": fb_count,
+            "fallbacks": fallbacks,
+            "explanation": explanation,
+            "quality_score": quality_score,
+            "quality_label": quality_label,
+            "retry_count": s.get("retry_count", 0),
+        })
+
+    for _i, stage in enumerate(user_stages):
+        for j, fb in enumerate(stage["fallbacks"]):
+            if j + 1 < len(stage["fallbacks"]):
+                fb["to_model"] = stage["fallbacks"][j + 1]["from_model"]
+            elif stage["model"]:
+                fb["to_model"] = stage["model"]
+
+    cross_stage = _extract_cross_stage(stages)
+    verdict = _compute_verdict(user_stages, total_fallbacks, data)
+
+    return {
+        "execution_id": data.get("execution_id", ""),
+        "mode": data.get("mode", ""),
+        "pipeline_id": data.get("pipeline_id", ""),
+        "pipeline_display_name": data.get("pipeline_display_name", ""),
+        "status": data.get("status", "unknown"),
+        "duration_ms": data.get("duration_ms", 0),
+        "stage_count": len(user_stages),
+        "total_fallbacks": total_fallbacks,
+        "total_retries": total_retries,
+        "quality_score": data.get("quality_score", 0),
+        "stages": user_stages,
+        "cross_stage": cross_stage,
+        "verdict": verdict,
+    }
+

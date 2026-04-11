@@ -276,7 +276,7 @@ class TestStudioExecutionDetails:
         stage2 = result["stages"][1]
         assert stage2["fallback_count"] == 1
         assert len(stage2["fallbacks"]) == 1
-        assert stage2["fallbacks"][0]["reason"] == "timed out"  # User-friendly
+        assert stage2["fallbacks"][0]["reason"] == "timeout"  # Classified reason
         assert stage2["explanation"] == "Answer reviewed (with fallback)"
 
         # Cross-stage
@@ -284,16 +284,15 @@ class TestStudioExecutionDetails:
         assert result["verdict"]["has_fallbacks"] is True
 
     def test_user_friendly_fallback_reason(self):
-        """Test fallback reason translation."""
-        from app.api.routes_studio import _user_friendly_fallback_reason
+        """Test fallback reason classification."""
+        from app.api.routes_studio import _classify_fallback_reason
 
-        assert _user_friendly_fallback_reason("timeout") == "timed out"
-        assert _user_friendly_fallback_reason("circuit_breaker_open") == "temporarily unavailable"
-        assert _user_friendly_fallback_reason("model_unavailable") == "unavailable"
-        assert _user_friendly_fallback_reason("rate_limited") == "rate limited"
-        assert _user_friendly_fallback_reason("") == "switched model"
-        assert _user_friendly_fallback_reason("some_unknown_error") == "error occurred"
-        assert _user_friendly_fallback_reason("internal_server_error") == "error occurred"
+        assert _classify_fallback_reason("timeout") == "timeout"
+        assert _classify_fallback_reason("circuit_breaker_open") == "provider_unavailable"
+        assert _classify_fallback_reason("model_unavailable") == "provider_unavailable"
+        assert _classify_fallback_reason("rate_limited") == "rate_limited"
+        assert _classify_fallback_reason("auth credentials file not found") == "auth_unavailable"
+        assert _classify_fallback_reason("some_unknown_error") == "execution_error"
 
     def test_stage_explanation_text(self):
         """Test stage explanation text generation."""

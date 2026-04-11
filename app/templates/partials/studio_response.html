@@ -45,8 +45,8 @@
                 <span class="studio-exec-stat-value">{{ execution.stage_count }}</span>
             </div>
             <div class="studio-exec-stat">
-                <span class="studio-exec-stat-label">Models</span>
-                <span class="studio-exec-stat-value">{{ execution.selected_models | length }}</span>
+                <span class="studio-exec-stat-label">Model</span>
+                <span class="studio-exec-stat-value" title="{{ execution.used_model }}">{{ (execution.used_model or execution.target_model) | truncate(12) }}</span>
             </div>
             <div class="studio-exec-stat">
                 <span class="studio-exec-stat-label">Fallbacks</span>
