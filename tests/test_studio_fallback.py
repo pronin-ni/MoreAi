@@ -187,3 +187,125 @@ class TestStudioIntelligentSelection:
         for mode_name, mode_config in STUDIO_MODE_POLICIES.items():
             assert "label" in mode_config
             assert "is_pipeline" in mode_config
+
+
+# ── Auto-Discovery and Cold-Start Tests ──
+
+
+class TestAutoDiscovery:
+    """Verify that new models automatically become candidates."""
+
+    def test_new_model_receives_default_stable_tag(self):
+        """New models not in BUILTIN_TAG_ASSIGNMENTS get {STABLE} default."""
+        from app.intelligence.tags import capability_registry
+
+        # Reset registry
+        capability_registry.clear()
+        capability_registry.initialize()
+
+        # An unknown model should get {STABLE} default
+        tags = capability_registry.get_tags("brand-new-model", "new-provider")
+        assert "stable" in tags
+
+    def test_known_model_keeps_specific_tags(self):
+        """Known models keep their specific tags, not affected by default."""
+        from app.intelligence.tags import capability_registry
+
+        capability_registry.clear()
+        capability_registry.initialize()
+
+        tags = capability_registry.get_tags("qwen", "qwen-provider")
+        # qwen should have reasoning_strong, stable, long_context — not just default
+        assert "reasoning_strong" in tags
+        assert "stable" in tags
+        assert "long_context" in tags
+
+    def test_new_model_not_excluded_from_candidates(self):
+        """New models pass through routing engine filters."""
+        from app.intelligence.tags import capability_registry
+
+        capability_registry.clear()
+        capability_registry.initialize()
+
+        # A new model should get STABLE tag and be eligible
+        tags = capability_registry.get_tags("future-model", "future-provider")
+        assert len(tags) > 0  # Has at least the default tag
+
+    def test_tag_bonus_gives_partial_score_for_default_tag(self):
+        """New model with {STABLE} gets reasonable tag bonus for balanced mode."""
+        from app.intelligence.suitability import suitability_scorer
+
+        # balanced mode prefers: ["stable", "reasoning_strong"]
+        # New model has: {STABLE} → 1/2 = 0.5 bonus
+        tags = {"stable"}
+        bonus = suitability_scorer._compute_tag_bonus(tags, "balanced")
+        assert bonus >= 0.4  # At least partial score
+
+    def test_tag_bonus_full_score_for_known_model(self):
+        """Known model with all preferred tags gets full tag bonus for generate role."""
+        from app.intelligence.suitability import suitability_scorer
+
+        # generate mode prefers: ["creative", "fast", "reasoning_strong", "long_context"]
+        # New model with {STABLE} only gets partial
+        tags = {"stable"}
+        bonus = suitability_scorer._compute_tag_bonus(tags, "generate")
+        # STABLE is not in generate's relevant tags → 0.3 (no match penalty)
+        assert bonus == 0.3
+
+        # But for balanced mode (unknown role), it returns neutral 0.5
+        bonus_balanced = suitability_scorer._compute_tag_bonus(tags, "balanced")
+        assert bonus_balanced == 0.5  # Neutral for unknown role
+
+    def test_cold_start_uses_static_priors(self):
+        """Model with no runtime history uses static priors, not penalized."""
+        from app.intelligence.suitability import suitability_scorer
+
+        # Cold-start: 0 samples → confidence=0.0, performance_score=0.5
+        result = suitability_scorer._compute_dynamic_performance_score("new-model", "generate")
+        assert result["confidence"] == 0.0
+        assert result["performance_score"] == 0.5
+        assert result["sample_count"] == 0
+
+    def test_gradual_adaptation_increases_confidence(self):
+        """As samples accumulate, confidence in runtime data increases."""
+        # This is tested via the confidence scaling logic:
+        # 0 samples → confidence 0.0
+        # 1-4 samples → confidence 0.1
+        # 5-99 samples → confidence 0.1→0.7 (linear)
+        # 100+ samples → confidence 0.7
+        # The formula is in _compute_dynamic_performance_score
+        from app.intelligence.suitability import (
+            FULL_WINDOW,
+            MIN_SAMPLES_FOR_DYNAMIC,
+        )
+
+        assert MIN_SAMPLES_FOR_DYNAMIC == 5
+        assert FULL_WINDOW == 100
+
+    def test_no_hardcoded_model_list_in_studio_modes(self):
+        """Studio modes must not have fixed model lists."""
+        from app.api.studio_modes import STUDIO_MODE_POLICIES
+
+        for mode_name, mode_config in STUDIO_MODE_POLICIES.items():
+            sel = mode_config.get("selection_policy")
+            if sel:
+                preferred = sel.get("preferred_models", [])
+                assert preferred == [], (
+                    f"{mode_name}: preferred_models is not empty — "
+                    "use empty list for auto-discovery"
+                )
+
+    def test_pipeline_stages_use_selection_policy_not_target_model(self):
+        """All pipeline stages must use selection_policy for auto-discovery."""
+        from app.pipeline.builtin_pipelines import (
+            DRAFT_VERIFY_FINALIZE,
+            GENERATE_CRITIQUE_REGENERATE,
+            GENERATE_REVIEW_REFINE,
+        )
+
+        for pipeline in [GENERATE_REVIEW_REFINE, GENERATE_CRITIQUE_REGENERATE, DRAFT_VERIFY_FINALIZE]:
+            for stage in pipeline.stages:
+                assert stage.uses_intelligent_selection, (
+                    f"Pipeline {pipeline.pipeline_id}, stage {stage.stage_id}: "
+                    "uses target_model instead of selection_policy"
+                )

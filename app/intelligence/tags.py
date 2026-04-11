@@ -18,6 +18,10 @@ logger = get_logger(__name__)
 # ── Built-in capability tag assignments ──
 # These are practical proxy assignments based on known model characteristics.
 # They can be overridden via admin config.
+#
+# NEW MODELS: Models not listed here receive a neutral default tag ({STABLE})
+# via CapabilityRegistry.get_tags(). They are NOT excluded from selection —
+# they just start without special bonuses until tags are assigned.
 
 BUILTIN_TAG_ASSIGNMENTS: list[CapabilityEntry] = [
     # Qwen — strong reasoning, stable, good for generation and refinement
@@ -54,27 +58,27 @@ BUILTIN_TAG_ASSIGNMENTS: list[CapabilityEntry] = [
         applies_to_models=["glm", "browser/glm"],
     ),
 
-    # Kimi — creative, good for generation
+    # Kimi — fast, creative, good for initial drafts
     CapabilityEntry(
         tag=CapabilityTag.CREATIVE,
-        description="Good creative writing and generation",
+        description="Good at creative and generative tasks",
         applies_to_models=["kimi", "browser/kimi"],
     ),
     CapabilityEntry(
         tag=CapabilityTag.FAST,
-        description="Fast response times",
+        description="Low latency, quick responses",
         applies_to_models=["kimi", "browser/kimi"],
     ),
     CapabilityEntry(
         tag=CapabilityTag.BROWSER_ONLY,
         description="Only available via browser automation",
-        applies_to_providers=["browser/kimi"],
+        applies_to_models=["kimi", "browser/kimi"],
     ),
 
-    # ChatGPT — strong reasoning, creative
+    # ChatGPT — creative and reasoning
     CapabilityEntry(
         tag=CapabilityTag.CREATIVE,
-        description="Good creative writing and generation",
+        description="Good at creative and generative tasks",
         applies_to_models=["chatgpt", "browser/chatgpt"],
     ),
     CapabilityEntry(
@@ -83,10 +87,10 @@ BUILTIN_TAG_ASSIGNMENTS: list[CapabilityEntry] = [
         applies_to_models=["chatgpt", "browser/chatgpt"],
     ),
 
-    # Yandex — fast, stable
+    # Yandex — fast and stable
     CapabilityEntry(
         tag=CapabilityTag.FAST,
-        description="Fast response times",
+        description="Low latency, quick responses",
         applies_to_models=["yandex", "browser/yandex"],
     ),
     CapabilityEntry(
@@ -95,10 +99,10 @@ BUILTIN_TAG_ASSIGNMENTS: list[CapabilityEntry] = [
         applies_to_models=["yandex", "browser/yandex"],
     ),
 
-    # Deepseek — code strong, reasoning
+    # Deepseek — code and reasoning
     CapabilityEntry(
         tag=CapabilityTag.CODE_STRONG,
-        description="Strong code generation capabilities",
+        description="Strong at code generation and debugging",
         applies_to_models=["deepseek", "browser/deepseek"],
     ),
     CapabilityEntry(
@@ -110,9 +114,11 @@ BUILTIN_TAG_ASSIGNMENTS: list[CapabilityEntry] = [
 
 
 class CapabilityRegistry:
-    """Registry of capability tags for models and providers.
+    """Manages capability tags for models and providers.
 
-    Supports built-in and dynamically assigned tags.
+    Tags are assigned at startup from BUILTIN_TAG_ASSIGNMENTS.
+    New models (not in the builtin list) receive a neutral default
+    tag so they are NOT penalized in ranking — they just lack bonuses.
     """
 
     def __init__(self) -> None:
@@ -128,11 +134,12 @@ class CapabilityRegistry:
 
         for entry in BUILTIN_TAG_ASSIGNMENTS:
             tag_str = entry.tag.value
-            self._tags.setdefault(tag_str, []).append(entry)
+            if tag_str not in self._tags:
+                self._tags[tag_str] = []
+            self._tags[tag_str].append(entry)
 
             for model_id in entry.applies_to_models:
                 self._model_tags.setdefault(model_id, set()).add(tag_str)
-
             for provider_id in entry.applies_to_providers:
                 self._provider_tags.setdefault(provider_id, set()).add(tag_str)
 
@@ -153,10 +160,22 @@ class CapabilityRegistry:
         return self._provider_tags.get(provider_id, set()).copy()
 
     def get_tags(self, model_id: str, provider_id: str) -> set[str]:
-        """Get combined capability tags for a model+provider."""
+        """Get combined capability tags for a model+provider.
+
+        For models NOT in BUILTIN_TAG_ASSIGNMENTS, returns a neutral
+        default tag {STABLE} so they are not penalized in ranking.
+        They start without special bonuses (no fast, reasoning_strong, etc.)
+        but are fully eligible for selection.
+        """
         model_tags = self._model_tags.get(model_id, set())
         provider_tags = self._provider_tags.get(provider_id, set())
-        return model_tags | provider_tags
+        combined = model_tags | provider_tags
+
+        # New/unknown models get a neutral default
+        if not combined:
+            combined = {CapabilityTag.STABLE.value}
+
+        return combined
 
     def has_tag(self, model_id: str, provider_id: str, tag: str) -> bool:
         """Check if a model+provider has a specific tag."""
