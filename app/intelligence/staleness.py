@@ -39,22 +39,30 @@ class StalenessDecay:
     """Computes time-based decay factor for historical model intelligence.
 
     Usage:
-        decay = StalenessDecay(last_activity_ts)
+        decay = StalenessDecay(last_activity_ts, source="stage_performance")
         factor = decay.decay_factor()          # 0.3 - 1.0
         adjusted = decay.apply(score)          # decay toward neutral
         info = decay.to_dict()                 # for diagnostics
     """
 
-    def __init__(self, last_activity_at: float, now: float | None = None) -> None:
+    def __init__(
+        self,
+        last_activity_at: float,
+        now: float | None = None,
+        activity_source: str = "unknown",
+    ) -> None:
         """Initialize staleness calculator.
 
         Args:
             last_activity_at: Timestamp of last known activity (success, failure,
                 or discovery). 0.0 means no activity data available.
             now: Current time for testing. Defaults to time.time().
+            activity_source: Which system provided the timestamp.
+                "stage_performance", "quality_metrics", "discovery", "unknown".
         """
         self.last_activity_at = last_activity_at
         self._now = now or time.time()
+        self.activity_source = activity_source
         self.staleness_seconds = self._compute_staleness()
         self.decay_factor_value = self._compute_decay()
 
@@ -131,6 +139,7 @@ class StalenessDecay:
             "is_stale": self.is_stale(),
             "is_very_stale": self.is_very_stale(),
             "staleness_label": self.staleness_label,
+            "activity_source": self.activity_source,
             "neutral_target": STALENESS_NEUTRAL_TARGET,
             "grace_period_seconds": STALENESS_GRACE_SECONDS,
             "half_life_seconds": STALENESS_HALF_LIFE,

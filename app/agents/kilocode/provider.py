@@ -1,9 +1,16 @@
+"""
+Kilocode server mode provider.
+
+Handles managed subprocess lifecycle, external server connection,
+model discovery, and prompt completion via Kilocode HTTP API.
+"""
+
 from typing import Any
 
 from app.agents.base import AgentProvider
-from app.agents.opencode.client import OpenCodeClient
-from app.agents.opencode.discovery import discover_models
-from app.agents.opencode.runtime import OpenCodeAgentRuntime as ManagedAgentRuntime
+from app.agents.kilocode.client import KilocodeClient
+from app.agents.kilocode.discovery import discover_models
+from app.agents.kilocode.runtime import KilocodeAgentRuntime
 from app.agents.registry import AgentModelDefinition, registry
 from app.core.config import settings
 from app.core.errors import ServiceUnavailableError
@@ -12,15 +19,15 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-class OpenCodeProvider(AgentProvider):
-    """Provider for OpenCode server mode integration."""
+class KilocodeProvider(AgentProvider):
+    """Provider for Kilocode server mode integration."""
 
-    provider_id = "opencode"
-    agent_type = "opencode_server"
+    provider_id = "kilocode"
+    agent_type = "kilocode_server"
 
     def __init__(self):
-        self._runtime: ManagedAgentRuntime | None = None
-        self._client = OpenCodeClient()
+        self._runtime: KilocodeAgentRuntime | None = None
+        self._client = KilocodeClient()
         self._models: list[AgentModelDefinition] = []
         self._available = False
         self._error: str | None = None
@@ -28,20 +35,20 @@ class OpenCodeProvider(AgentProvider):
 
     async def initialize(self) -> None:
         """Initialize provider: start managed subprocess (if configured) or connect to external, then healthcheck and model discovery."""
-        if not settings.opencode.enabled:
-            logger.info("OpenCode provider is disabled by config")
+        if not settings.kilocode.enabled:
+            logger.info("Kilocode provider is disabled by config")
             self._available = False
             self._error = "disabled_by_config"
             self._mode = "external"
             return
 
         # Determine mode
-        if settings.opencode.managed and settings.opencode.autostart:
+        if settings.kilocode.managed and settings.kilocode.autostart:
             self._mode = "managed"
             await self._initialize_managed()
-        elif settings.opencode.managed and not settings.opencode.autostart:
+        elif settings.kilocode.managed and not settings.kilocode.autostart:
             self._mode = "managed_no_autostart"
-            logger.info("OpenCode provider is managed but autostart is disabled")
+            logger.info("Kilocode provider is managed but autostart is disabled")
             self._available = False
             self._error = "managed_autostart_disabled"
         else:
@@ -49,20 +56,20 @@ class OpenCodeProvider(AgentProvider):
             await self._initialize_external()
 
     async def _initialize_managed(self) -> None:
-        """Start and manage the OpenCode subprocess."""
-        self._runtime = ManagedAgentRuntime()
+        """Start and manage the Kilocode subprocess."""
+        self._runtime = KilocodeAgentRuntime()
 
         started = await self._runtime.start()
         if not started:
             self._available = False
             self._error = self._runtime._error or "failed_to_start"
             logger.error(
-                "OpenCode managed startup failed",
+                "Kilocode managed startup failed",
                 error=self._error,
             )
-            if settings.opencode.required:
+            if settings.kilocode.required:
                 raise RuntimeError(
-                    f"OpenCode provider is required but failed to start: {self._error}"
+                    f"Kilocode provider is required but failed to start: {self._error}"
                 )
             return
 
@@ -70,77 +77,77 @@ class OpenCodeProvider(AgentProvider):
         try:
             health = await self._client.healthcheck()
             logger.info(
-                "OpenCode server healthcheck passed",
+                "Kilocode server healthcheck passed",
                 version=health.get("version", "unknown"),
             )
             self._available = True
         except Exception as exc:
             logger.warning(
-                "OpenCode server healthcheck failed after managed start",
+                "Kilocode server healthcheck failed after managed start",
                 error=str(exc),
             )
             self._available = False
             self._error = f"post_start_healthcheck_failed: {exc}"
-            if settings.opencode.required:
+            if settings.kilocode.required:
                 raise RuntimeError(
-                    f"OpenCode provider is required but healthcheck failed: {exc}"
+                    f"Kilocode provider is required but healthcheck failed: {exc}"
                 ) from exc
             return
 
-        if settings.opencode.discovery_enabled:
+        if settings.kilocode.discovery_enabled:
             try:
                 self._models = await discover_models(self._client)
                 logger.info(
-                    "OpenCode models discovered",
+                    "Kilocode models discovered",
                     model_count=len(self._models),
                 )
             except Exception as exc:
                 logger.warning(
-                    "OpenCode model discovery failed",
+                    "Kilocode model discovery failed",
                     error=str(exc),
                 )
                 self._models = []
                 self._error = f"discovery_failed: {exc}"
         else:
-            logger.info("OpenCode model discovery is disabled")
+            logger.info("Kilocode model discovery is disabled")
             self._models = []
 
         registry.register(self, self._models)
 
     async def _initialize_external(self) -> None:
-        """Connect to an externally managed OpenCode server."""
+        """Connect to an externally managed Kilocode server."""
         try:
             health = await self._client.healthcheck()
             logger.info(
-                "OpenCode server healthcheck passed (external)",
+                "Kilocode server healthcheck passed (external)",
                 version=health.get("version", "unknown"),
             )
             self._available = True
         except Exception as exc:
             logger.warning(
-                "OpenCode external server healthcheck failed",
+                "Kilocode external server healthcheck failed",
                 error=str(exc),
             )
             self._available = False
             self._error = f"healthcheck_failed: {exc}"
             return
 
-        if settings.opencode.discovery_enabled:
+        if settings.kilocode.discovery_enabled:
             try:
                 self._models = await discover_models(self._client)
                 logger.info(
-                    "OpenCode models discovered (external)",
+                    "Kilocode models discovered (external)",
                     model_count=len(self._models),
                 )
             except Exception as exc:
                 logger.warning(
-                    "OpenCode model discovery failed",
+                    "Kilocode model discovery failed",
                     error=str(exc),
                 )
                 self._models = []
                 self._error = f"discovery_failed: {exc}"
         else:
-            logger.info("OpenCode model discovery is disabled")
+            logger.info("Kilocode model discovery is disabled")
             self._models = []
 
         registry.register(self, self._models)
@@ -153,19 +160,19 @@ class OpenCodeProvider(AgentProvider):
         timeout: int | None = None,
         **kwargs: Any,
     ) -> str:
-        """Send a prompt via OpenCode server and return the assistant response."""
+        """Send a prompt via Kilocode server and return the assistant response."""
         if not self._available:
             raise ServiceUnavailableError(
-                "OpenCode provider is not available",
+                "Kilocode provider is not available",
                 details={"error": self._error},
             )
 
-        # Extract upstream model info from canonical_id: agent/opencode/<provider_key>/<model_id>
+        # Extract upstream model info from canonical_id: agent/kilocode/<provider_key>/<model_id>
         parts = model.split("/", 3)
         if len(parts) >= 4:
             upstream_provider_key = parts[2]
             upstream_model_id = parts[3]
-            # Full model reference for OpenCode: "opencode/big-pickle"
+            # Full model reference for Kilocode: "kilocode/some-model"
             upstream_model = f"{upstream_provider_key}/{upstream_model_id}"
         else:
             # Fallback
@@ -179,12 +186,12 @@ class OpenCodeProvider(AgentProvider):
 
             if not session_id:
                 raise ServiceUnavailableError(
-                    "Failed to create OpenCode session",
+                    "Failed to create Kilocode session",
                     details={"session_result": session_result},
                 )
 
             logger.info(
-                "Sending message to OpenCode",
+                "Sending message to Kilocode",
                 session_id=session_id,
                 model=upstream_model,
             )
@@ -203,7 +210,7 @@ class OpenCodeProvider(AgentProvider):
             raise
         except Exception as exc:
             raise ServiceUnavailableError(
-                "OpenCode completion failed",
+                "Kilocode completion failed",
                 details={"model": model, "error": str(exc)},
             ) from exc
         finally:
@@ -290,7 +297,6 @@ class OpenCodeProvider(AgentProvider):
                 continue
             part_type = part.get("type", "")
             if part_type == "text":
-                # OpenCode uses "text" field in response parts
                 content = part.get("text", "")
                 if content:
                     text_parts.append(content)
@@ -302,4 +308,4 @@ class OpenCodeProvider(AgentProvider):
 
 
 # Singleton instance
-provider = OpenCodeProvider()
+provider = KilocodeProvider()

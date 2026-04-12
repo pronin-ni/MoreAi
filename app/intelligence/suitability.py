@@ -145,6 +145,8 @@ class ScoringBreakdown:
         self.last_activity_seconds_ago: float = 0.0
         self.staleness_label: str = "fresh"
         self.effective_confidence: float = 0.0  # Confidence after staleness reduction
+        self.activity_source_used: str = "unknown"  # Which source provided last_activity_at
+        self.activity_source_is_role_specific: bool = False  # Whether source is role-aware
 
         # Final score
         self.final_score: float = 0.0
@@ -198,6 +200,8 @@ class ScoringBreakdown:
                 "last_activity_seconds_ago": round(self.last_activity_seconds_ago, 1),
                 "staleness_label": self.staleness_label,
                 "effective_confidence": round(self.effective_confidence, 3),
+                "activity_source": self.activity_source_used,
+                "activity_source_is_role_specific": self.activity_source_is_role_specific,
             },
             "final_score": round(self.final_score, 3),
         }
@@ -255,6 +259,7 @@ class SuitabilityScorer:
         transport: str,
         role: StageRole | str,
         failure_penalties: dict[str, float] | None = None,
+        staleness_data: tuple[float, str, bool] | None = None,
     ) -> ScoringBreakdown:
         """Compute full scoring breakdown for traceability.
 
@@ -264,6 +269,8 @@ class SuitabilityScorer:
             transport: The transport type.
             role: The stage role.
             failure_penalties: Optional {reason: penalty_amount} from adaptive fallback.
+            staleness_data: Optional pre-fetched (last_activity_at, activity_source, is_role_specific) tuple.
+                When provided, skips per-model staleness lookup (used in batched ranking).
 
         Returns:
             ScoringBreakdown with full transparency.
@@ -279,9 +286,13 @@ class SuitabilityScorer:
         breakdown.tag_bonus_score = self._compute_tag_bonus(tags, role_str)
 
         # Apply staleness decay to component scores
-        last_activity = _get_last_activity(model_id, provider_id)
+        if staleness_data is not None:
+            last_activity, activity_source, is_role_specific = staleness_data
+        else:
+            last_activity, activity_source = _get_last_activity_with_source(model_id, provider_id)
+            is_role_specific = activity_source in ("stage_performance", "quality_metrics")
         from app.intelligence.staleness import StalenessDecay
-        staleness = StalenessDecay(last_activity)
+        staleness = StalenessDecay(last_activity, activity_source=activity_source)
 
         # Decay stability and availability toward neutral (latency and tags don't decay)
         breakdown.stability_score = staleness.apply(breakdown.stability_score)
@@ -291,6 +302,8 @@ class SuitabilityScorer:
         breakdown.staleness_decay = staleness.decay_factor_value
         breakdown.last_activity_seconds_ago = staleness.staleness_seconds
         breakdown.staleness_label = staleness.staleness_label
+        breakdown.activity_source_used = staleness.activity_source
+        breakdown.activity_source_is_role_specific = is_role_specific
 
         # Compute base static score
         weights = WEIGHTS.get(role_str, WEIGHTS["generate"])
@@ -527,35 +540,239 @@ class SuitabilityScorer:
 suitability_scorer = SuitabilityScorer()
 
 
-def _get_last_activity(model_id: str, provider_id: str) -> float:
-    """Get the most recent activity timestamp for a model+provider.
+def _get_last_activity_with_source(model_id: str, provider_id: str) -> tuple[float, str]:
+    """Get the most recent activity timestamp for a model+provider with source tracking.
 
-    Sources (in priority order):
-    1. ModelLifecycleEntry.last_seen_at from intelligence tracker
-    2. ModelRuntimeStats.last_success_at / last_failure_at (if populated)
-    3. Default: 0.0 (triggers immediate staleness)
+    Priority order (most trustworthy first):
+    1. StagePerformanceTracker — every pipeline stage execution is recorded
+       with a timestamp. This is the most accurate signal of real usage.
+    2. QualityMetricsStore — quality assessments are recorded after each
+       stage execution, also with timestamps.
+    3. ModelLifecycleEntry.last_seen_at — discovery-based timestamp. Useful
+       as a fallback when runtime data is absent.
+    4. ModelRuntimeStats — legacy fields (rarely populated).
+    5. Default: (0.0, "unknown") — triggers maximum staleness.
 
     Returns:
-        Timestamp of last known activity, or 0.0 if unknown.
+        Tuple of (timestamp, source_label) where source_label is one of:
+        "stage_performance", "quality_metrics", "discovery", "unknown".
     """
-    # Source 1: Intelligence tracker lifecycle
+    # Source 1: Stage performance tracker (most reliable — real runtime usage)
+    try:
+        from app.pipeline.observability.stage_perf import stage_performance
+        ts = stage_performance.get_latest_timestamp(model_id)
+        if ts > 0:
+            return ts, "stage_performance"
+    except Exception:
+        pass  # Stage perf DB may not be available
+
+    # Source 2: Quality metrics store (also runtime-based, slightly less direct)
+    try:
+        from app.pipeline.observability.quality_scoring import quality_metrics_store
+        ts = quality_metrics_store.get_latest_timestamp(model_id)
+        if ts > 0:
+            return ts, "quality_metrics"
+    except Exception:
+        pass  # Quality metrics DB may not be available
+
+    # Source 3: Intelligence tracker lifecycle (discovery-based)
     try:
         from app.intelligence.tracker import model_intelligence_tracker
         entry = model_intelligence_tracker.get_entry(model_id)
         if entry and entry.last_seen_at > 0:
-            return entry.last_seen_at
+            return entry.last_seen_at, "discovery"
     except Exception:
         pass  # Tracker may not be initialized
 
-    # Source 2: Runtime stats (may not be populated)
+    # Source 4: Runtime stats (legacy, rarely populated)
     try:
         from app.intelligence.stats import stats_aggregator
         stats = stats_aggregator.get_model_stats(model_id, provider_id, "api")
         if stats.last_success_at > 0:
-            return stats.last_success_at
+            return stats.last_success_at, "runtime_stats"
         if stats.last_failure_at > 0:
-            return stats.last_failure_at
+            return stats.last_failure_at, "runtime_stats"
     except Exception:
         pass
 
-    return 0.0
+    return 0.0, "unknown"
+
+
+def _get_last_activity(model_id: str, provider_id: str) -> float:
+    """Legacy convenience wrapper — returns timestamp only (no source)."""
+    ts, _ = _get_last_activity_with_source(model_id, provider_id)
+    return ts
+
+
+def _batch_get_last_activity_with_source(
+    candidates: list[tuple[str, str, str]],
+) -> dict[str, tuple[float, str]]:
+    """Batched activity timestamp lookup for multiple model+provider pairs.
+
+    Priority order (most trustworthy first), preserved from per-model logic:
+    1. StagePerformanceTracker — batched query via IN clause
+    2. QualityMetricsStore — batched query via IN clause
+    3. ModelLifecycleEntry.last_seen_at — per-model in-memory lookup
+    4. ModelRuntimeStats — legacy fallback (rarely populated)
+    5. Default: (0.0, "unknown")
+
+    Args:
+        candidates: List of (model_id, provider_id, transport) tuples.
+
+    Returns:
+        Dict mapping model_id to (last_activity_at, activity_source).
+    """
+    if not candidates:
+        return {}
+
+    model_ids = sorted({c[0] for c in candidates})
+    result: dict[str, tuple[float, str]] = {}
+
+    # Source 1: Stage performance tracker (batched — single query)
+    try:
+        from app.pipeline.observability.stage_perf import stage_performance
+        stage_ts_map = stage_performance.get_latest_timestamps(model_ids)
+        for mid, ts in stage_ts_map.items():
+            if ts > 0:
+                result[mid] = (ts, "stage_performance")
+    except Exception:
+        pass  # Stage perf DB may not be available
+
+    # Source 2: Quality metrics store (batched — single query)
+    # Only query models not already resolved by stage_performance
+    unresolved = [mid for mid in model_ids if mid not in result]
+    if unresolved:
+        try:
+            from app.pipeline.observability.quality_scoring import quality_metrics_store
+            quality_ts_map = quality_metrics_store.get_latest_timestamps(unresolved)
+            for mid, ts in quality_ts_map.items():
+                if ts > 0 and mid not in result:
+                    result[mid] = (ts, "quality_metrics")
+        except Exception:
+            pass  # Quality metrics DB may not be available
+
+    # Source 3: Intelligence tracker lifecycle (per-model, in-memory)
+    unresolved = [mid for mid in model_ids if mid not in result]
+    if unresolved:
+        try:
+            from app.intelligence.tracker import model_intelligence_tracker
+            for mid in unresolved:
+                entry = model_intelligence_tracker.get_entry(mid)
+                if entry and entry.last_seen_at > 0:
+                    result[mid] = (entry.last_seen_at, "discovery")
+        except Exception:
+            pass  # Tracker may not be initialized
+
+    # Source 4: Runtime stats (legacy, per-model)
+    unresolved = [mid for mid in model_ids if mid not in result]
+    if unresolved:
+        try:
+            from app.intelligence.stats import stats_aggregator
+            for mid in unresolved:
+                # Find any provider_id from candidates for this model
+                provider = next((c[1] for c in candidates if c[0] == mid), "")
+                stats = stats_aggregator.get_model_stats(mid, provider, "api")
+                if stats.last_success_at > 0:
+                    result[mid] = (stats.last_success_at, "runtime_stats")
+                elif stats.last_failure_at > 0:
+                    result[mid] = (stats.last_failure_at, "runtime_stats")
+        except Exception:
+            pass
+
+    # Default: mark remaining models as unknown
+    for mid in model_ids:
+        if mid not in result:
+            result[mid] = (0.0, "unknown")
+
+    return result
+
+
+def _batch_get_last_activity_with_source_by_role(
+    candidates: list[tuple[str, str, str]],
+    role: str,
+) -> dict[tuple[str, str], tuple[float, str, bool]]:
+    """Batched activity timestamp lookup for multiple model+provider pairs, role-aware.
+
+    Priority order (most trustworthy first):
+    1. StagePerformanceTracker — batched query by (model_id, stage_role)
+    2. QualityMetricsStore — batched query by (model_id, role)
+    3. ModelLifecycleEntry.last_seen_at — per-model in-memory lookup (role-agnostic fallback)
+    4. ModelRuntimeStats — legacy fallback (rarely populated, role-agnostic)
+    5. Default: (0.0, "unknown", False)
+
+    Args:
+        candidates: List of (model_id, provider_id, transport) tuples.
+        role: The stage role to filter by (e.g., "generate", "review").
+
+    Returns:
+        Dict mapping (model_id, role) to (last_activity_at, activity_source, is_role_specific).
+        is_role_specific is True for sources 1-2, False for sources 3-5.
+    """
+    if not candidates:
+        return {}
+
+    model_role_pairs = [(c[0], role) for c in candidates]
+    unique_pairs = sorted(set(model_role_pairs))
+
+    result: dict[tuple[str, str], tuple[float, str, bool]] = {}
+
+    # Source 1: Stage performance tracker (role-specific — batched single query)
+    try:
+        from app.pipeline.observability.stage_perf import stage_performance
+        stage_ts_map = stage_performance.get_latest_timestamps_by_role(unique_pairs)
+        for (mid, r), ts in stage_ts_map.items():
+            if ts > 0:
+                result[(mid, r)] = (ts, "stage_performance", True)
+    except Exception:
+        pass  # Stage perf DB may not be available
+
+    # Source 2: Quality metrics store (role-specific — batched single query)
+    unresolved = [mr for mr in unique_pairs if mr not in result]
+    if unresolved:
+        try:
+            from app.pipeline.observability.quality_scoring import quality_metrics_store
+            quality_ts_map = quality_metrics_store.get_latest_timestamps_by_role(unresolved)
+            for (mid, r), ts in quality_ts_map.items():
+                if ts > 0 and (mid, r) not in result:
+                    result[(mid, r)] = (ts, "quality_metrics", True)
+        except Exception:
+            pass  # Quality metrics DB may not be available
+
+    # Source 3: Intelligence tracker lifecycle (per-model, in-memory — role-agnostic)
+    unresolved = [mr for mr in unique_pairs if mr not in result]
+    if unresolved:
+        try:
+            from app.intelligence.tracker import model_intelligence_tracker
+            for mid in {mr[0] for mr in unresolved}:
+                entry = model_intelligence_tracker.get_entry(mid)
+                if entry and entry.last_seen_at > 0:
+                    for r in {mr[1] for mr in unresolved if mr[0] == mid}:
+                        result[(mid, r)] = (entry.last_seen_at, "discovery", False)
+        except Exception:
+            pass  # Tracker may not be initialized
+
+    # Source 4: Runtime stats (legacy, per-model — role-agnostic)
+    unresolved = [mr for mr in unique_pairs if mr not in result]
+    if unresolved:
+        try:
+            from app.intelligence.stats import stats_aggregator
+            for mid in {mr[0] for mr in unresolved}:
+                provider = next((c[1] for c in candidates if c[0] == mid), "")
+                stats = stats_aggregator.get_model_stats(mid, provider, "api")
+                if stats.last_success_at > 0:
+                    ts = stats.last_success_at
+                elif stats.last_failure_at > 0:
+                    ts = stats.last_failure_at
+                else:
+                    continue
+                for r in {mr[1] for mr in unresolved if mr[0] == mid}:
+                    result[(mid, r)] = (ts, "runtime_stats", False)
+        except Exception:
+            pass
+
+    # Default: mark remaining models as unknown
+    for mr in unique_pairs:
+        if mr not in result:
+            result[mr] = (0.0, "unknown", False)
+
+    return result

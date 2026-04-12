@@ -166,17 +166,16 @@ class RuntimeConfigApplier:
                 continue
 
             try:
-                if pid == "opencode":
-                    # Agent provider
-                    if self.agent_registry:
-                        provider = self.agent_registry.get_provider(pid)
-                        if provider:
-                            if override.enabled is False:
-                                await provider.shutdown()
-                                details[pid] = "shutdown"
-                            elif override.enabled is True:
-                                await provider.initialize()
-                                details[pid] = "reinitialized"
+                if self.agent_registry and pid in self.agent_registry._providers:
+                    # Generic agent provider — shutdown or reinitialize
+                    provider = self.agent_registry.get_provider(pid)
+                    if provider:
+                        if override.enabled is False:
+                            await provider.shutdown()
+                            details[pid] = "shutdown"
+                        elif override.enabled is True:
+                            await provider.initialize()
+                            details[pid] = "reinitialized"
                 elif pid in ("qwen", "glm", "chatgpt", "yandex", "kimi", "deepseek"):
                     # Browser provider: concurrency limit update on dispatcher
                     if self.browser_dispatcher and override.concurrency_limit is not None:

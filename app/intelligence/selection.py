@@ -14,7 +14,10 @@ from app.admin.config_manager import config_manager
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger
 from app.intelligence.stats import stats_aggregator
-from app.intelligence.suitability import suitability_scorer
+from app.intelligence.suitability import (
+    _batch_get_last_activity_with_source_by_role,
+    suitability_scorer,
+)
 from app.intelligence.tags import capability_registry
 from app.intelligence.types import (
     CandidateRanking,
@@ -294,6 +297,8 @@ class ModelSelector:
         - avoid same model as previous stage
         - admin overrides
 
+        Uses batched staleness lookup to avoid per-candidate SQLite queries.
+
         Args:
             candidates: List of candidate model dicts.
             role: Stage role to score for.
@@ -307,6 +312,12 @@ class ModelSelector:
         rankings: list[CandidateRanking] = []
         weights = RANKING_WEIGHTS
         failure_penalties = failure_penalties or {}
+
+        # Batch role-aware staleness lookup once for all candidates
+        staleness_map = _batch_get_last_activity_with_source_by_role(
+            [(c["model_id"], c["provider_id"], c["transport"]) for c in candidates],
+            role,
+        )
 
         for c in candidates:
             model_id = c["model_id"]
@@ -326,10 +337,12 @@ class ModelSelector:
             ranking.latency_score = stats.latency_score
             ranking.stability_score = stats.stability_score
 
-            # Stage suitability with scoring breakdown
+            # Stage suitability with scoring breakdown (uses role-aware pre-fetched staleness data)
             model_penalties = failure_penalties.get(model_id)
+            staleness_data = staleness_map.get((model_id, role))
             breakdown = suitability_scorer.compute_breakdown(
                 model_id, provider_id, transport, role, model_penalties,
+                staleness_data=staleness_data,
             )
 
             ranking.stage_suitability_score = breakdown.final_score

@@ -39,6 +39,19 @@ RUN ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64") \
     && rm /tmp/opencode.tar.gz \
     && opencode version || true
 
+# Install Kilocode CLI for agent model support
+RUN ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64") \
+    && case "$ARCH" in \
+        amd64) KC_ARCH="x64" ;; \
+        arm64) KC_ARCH="arm64" ;; \
+        *) KC_ARCH="x64" ;; \
+    esac \
+    && echo "Installing kilocode for $KC_ARCH..." \
+    && curl -fsSL "https://github.com/kilocode/kilocode/releases/latest/download/kilocode-linux-${KC_ARCH}.tar.gz" -o /tmp/kilocode.tar.gz \
+    && tar -xzf /tmp/kilocode.tar.gz -C /usr/local/bin kilocode \
+    && rm /tmp/kilocode.tar.gz \
+    && kilocode version || true
+
 COPY pyproject.toml .
 COPY app/ ./app/
 RUN pip install uv && uv sync --all-extras

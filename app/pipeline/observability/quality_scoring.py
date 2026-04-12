@@ -694,6 +694,90 @@ class QualityMetricsStore:
         finally:
             conn.close()
 
+    def get_latest_timestamps_by_role(
+        self,
+        model_role_pairs: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], float]:
+        """Get the most recent quality metric timestamps for multiple model+role pairs in one query.
+
+        Args:
+            model_role_pairs: List of (model_id, role) tuples to look up.
+
+        Returns:
+            Dict mapping (model_id, role) to latest timestamp.
+            Pairs with no entries are omitted from the result.
+        """
+        if not model_role_pairs:
+            return {}
+
+        conn = self._connect()
+        try:
+            model_ids = sorted({mr[0] for mr in model_role_pairs})
+            roles = sorted({mr[1] for mr in model_role_pairs})
+            model_placeholders = ",".join("?" for _ in model_ids)
+            role_placeholders = ",".join("?" for _ in roles)
+            query = f"""
+                SELECT model_id, role, MAX(timestamp) as latest
+                FROM quality_metrics
+                WHERE model_id IN ({model_placeholders})
+                  AND role IN ({role_placeholders})
+                GROUP BY model_id, role
+            """
+            rows = conn.execute(query, model_ids + roles).fetchall()
+            return {(row["model_id"], row["role"]): row["latest"] for row in rows}
+        except sqlite3.Error:
+            return {}
+        finally:
+            conn.close()
+
+    def get_latest_timestamps(self, model_ids: list[str]) -> dict[str, float]:
+        """Get the most recent quality metric timestamps for multiple models in one query.
+
+        Args:
+            model_ids: List of model IDs to look up.
+
+        Returns:
+            Dict mapping model_id to latest timestamp.
+            Models with no entries are omitted from the result.
+        """
+        if not model_ids:
+            return {}
+
+        conn = self._connect()
+        try:
+            placeholders = ",".join("?" for _ in model_ids)
+            query = f"""
+                SELECT model_id, MAX(timestamp) as latest
+                FROM quality_metrics
+                WHERE model_id IN ({placeholders})
+                GROUP BY model_id
+            """
+            rows = conn.execute(query, model_ids).fetchall()
+            return {row["model_id"]: row["latest"] for row in rows}
+        except sqlite3.Error:
+            return {}
+        finally:
+            conn.close()
+
+    def get_latest_timestamp(self, model_id: str) -> float:
+        """Get the most recent quality metric timestamp for a model.
+
+        Returns:
+            Unix timestamp of the most recent quality_metrics entry,
+            or 0.0 if no entries exist for this model.
+        """
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT MAX(timestamp) as latest FROM quality_metrics WHERE model_id = ?",
+                (model_id,),
+            ).fetchone()
+            return row["latest"] if row and row["latest"] else 0.0
+        except sqlite3.Error:
+            return 0.0
+        finally:
+            conn.close()
+
     def cleanup(self) -> int:
         """Run retention cleanup. Returns rows deleted."""
         conn = self._connect()

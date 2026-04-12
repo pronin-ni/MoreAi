@@ -380,15 +380,6 @@ async def list_actions(_=Depends(require_admin)):
             requires_restart=False,
         ),
         AdminActionView(
-            id="agent/opencode/restart",
-            display_name="Restart OpenCode",
-            description="Restart managed OpenCode subprocess",
-            category="agent",
-            parameters={},
-            destructive=True,
-            requires_restart=False,
-        ),
-        AdminActionView(
             id="cache/clear",
             display_name="Clear Runtime Cache",
             description="Clear all runtime caches",
@@ -398,6 +389,22 @@ async def list_actions(_=Depends(require_admin)):
             requires_restart=False,
         ),
     ]
+
+    # Add generic restart actions for each agent provider
+    from app.agents.registry import registry as agent_registry
+    for pid in sorted(agent_registry._providers.keys()):
+        actions.append(
+            AdminActionView(
+                id=f"agent/{pid}/restart",
+                display_name=f"Restart {pid.title()}",
+                description=f"Restart managed {pid} subprocess",
+                category="agent",
+                parameters={},
+                destructive=True,
+                requires_restart=False,
+            )
+        )
+
     return actions
 
 
@@ -419,18 +426,31 @@ async def execute_action(action_id: str, _=Depends(require_admin)):
                 "duration_seconds": time.monotonic() - start,
             }
 
-        case "agent/opencode/restart":
-            from app.agents.opencode.provider import provider as opencode_provider
+        case action_id if action_id.startswith("agent/") and action_id.endswith("/restart"):
+            # Generic agent provider restart: extract provider_id from action_id
+            # Format: "agent/{provider_id}/restart"
+            parts = action_id.split("/")
+            if len(parts) == 3:
+                provider_id = parts[1]
+                from app.agents.registry import registry as agent_registry
 
-            await opencode_provider.shutdown()
-            await opencode_provider.initialize()
+                provider = agent_registry.get_provider(provider_id)
+                await provider.shutdown()
+                await provider.initialize()
+                return {
+                    "action_id": action_id,
+                    "status": "success",
+                    "details": {
+                        "provider_id": provider_id,
+                        "available": getattr(provider, "_available", False),
+                        "model_count": len(getattr(provider, "_models", [])),
+                    },
+                    "duration_seconds": time.monotonic() - start,
+                }
             return {
                 "action_id": action_id,
-                "status": "success",
-                "details": {
-                    "available": opencode_provider._available,
-                    "model_count": len(opencode_provider._models),
-                },
+                "status": "error",
+                "details": {"message": f"Invalid agent action format: {action_id}"},
                 "duration_seconds": time.monotonic() - start,
             }
 

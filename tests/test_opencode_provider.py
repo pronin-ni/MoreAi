@@ -6,9 +6,19 @@ from httpx import Response
 from app.agents.opencode.client import OpenCodeClient
 from app.agents.opencode.discovery import discover_models
 from app.agents.opencode.provider import OpenCodeProvider
-from app.agents.registry import AgentModelDefinition, AgentRegistry
+from app.agents.registry import AgentModelDefinition, AgentRegistry, registry as agent_registry
 from app.core import config as config_module
 from app.core.errors import ServiceUnavailableError
+
+
+@pytest.fixture(autouse=True)
+def _clean_agent_registry():
+    """Save and restore agent registry state to avoid test pollution."""
+    saved_providers = dict(agent_registry._providers)
+    saved_models = dict(agent_registry._models)
+    yield
+    agent_registry._providers = saved_providers
+    agent_registry._models = saved_models
 
 
 class TestOpenCodeClient:

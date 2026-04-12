@@ -85,7 +85,7 @@ class TestConfigManager:
     def mgr(self, tmp_path):
         config_path = str(tmp_path / "admin.json")
         mgr = ConfigManager(config_path=config_path)
-        mgr.register_known_providers({"qwen", "glm", "opencode"})
+        mgr.register_known_providers({"qwen", "glm", "opencode", "kilocode"})
         mgr.register_known_models({"browser/qwen", "api/g4f-groq/test"})
         return mgr
 
@@ -135,7 +135,7 @@ class TestConfigManager:
 
         # Create new manager from same path
         new_mgr = ConfigManager(config_path=str(tmp_path / "admin.json"))
-        new_mgr.register_known_providers({"qwen", "glm", "opencode"})
+        new_mgr.register_known_providers({"qwen", "glm", "opencode", "kilocode"})
 
         assert new_mgr.overrides.providers["qwen"].enabled is False
 
@@ -193,7 +193,7 @@ class TestConfigResolver:
     def mgr(self, tmp_path):
         config_path = str(tmp_path / "admin.json")
         mgr = ConfigManager(config_path=config_path)
-        mgr.register_known_providers({"qwen", "glm", "opencode"})
+        mgr.register_known_providers({"qwen", "glm", "opencode", "kilocode"})
         mgr.register_known_models({"browser/qwen", "api/g4f-groq/test"})
         return mgr
 

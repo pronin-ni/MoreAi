@@ -1,5 +1,12 @@
 import app.browser.providers  # noqa: F401
-import app.agents.opencode.provider  # noqa: F401
+import importlib
+import pkgutil
+
+# Dynamically discover and import all agent provider packages
+import app.agents
+for _finder, agent_pkg_name, _ispkg in pkgutil.iter_modules(app.agents.__path__, app.agents.__name__ + "."):
+    if agent_pkg_name.endswith(".provider"):
+        importlib.import_module(agent_pkg_name)
 
 from app.agents.registry import registry as agent_registry
 from app.browser.registry import registry as browser_registry

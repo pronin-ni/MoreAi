@@ -121,6 +121,39 @@ class OpenCodeSettings(BaseSettings):
     required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
 
 
+class KilocodeSettings(BaseSettings):
+    """Kilocode server configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="KILOCODE_", extra="ignore")
+
+    # Core
+    enabled: bool = Field(default=True)
+    base_url: str = Field(default="http://127.0.0.1:5096")
+    username: str = Field(default="kilocode")
+    password: str | None = Field(default=None)
+    timeout_seconds: int = Field(default=120, ge=1)
+    discovery_enabled: bool = Field(default=True)
+    session_ttl_seconds: int = Field(default=60, ge=1)
+
+    # Managed lifecycle
+    managed: bool = Field(
+        default=True,
+        description="If true, MoreAI manages the Kilocode subprocess lifecycle",
+    )
+    autostart: bool = Field(
+        default=True,
+        description="If true and managed=true, automatically start kilocode serve on app startup",
+    )
+    command: str = Field(default="kilocode", description="Command to run for Kilocode server")
+    port: int = Field(default=5096, ge=1, le=65535, description="Port for Kilocode server")
+    startup_timeout_seconds: int = Field(default=30, ge=5, description="Max seconds to wait for server to become healthy")
+    healthcheck_interval_seconds: int = Field(default=1, ge=1, description="Poll interval for readiness healthcheck")
+    graceful_shutdown_seconds: int = Field(default=10, ge=1, description="Grace period for SIGTERM before SIGKILL")
+    working_dir: str | None = Field(default=None, description="Working directory for the subprocess")
+    extra_env: dict[str, str] = Field(default_factory=dict, description="Additional environment variables for the subprocess")
+    required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
+
+
 class ModelDiscoverySettings(BaseSettings):
     """Automatic model discovery and periodic refresh configuration."""
 
@@ -217,6 +250,7 @@ class Settings(BaseSettings):
     kimi: KimiSettings = Field(default_factory=KimiSettings)
     deepseek: DeepseekSettings = Field(default_factory=DeepseekSettings)
     opencode: OpenCodeSettings = Field(default_factory=OpenCodeSettings)
+    kilocode: KilocodeSettings = Field(default_factory=KilocodeSettings)
     google_auth: GoogleAuthSettings = Field(default_factory=GoogleAuthSettings)
     recon: ReconSettings = Field(default_factory=ReconSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
@@ -241,6 +275,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "deepseek", DeepseekSettings())
         if "opencode" not in kwargs:
             object.__setattr__(self, "opencode", OpenCodeSettings())
+        if "kilocode" not in kwargs:
+            object.__setattr__(self, "kilocode", KilocodeSettings())
         if "google_auth" not in kwargs:
             object.__setattr__(self, "google_auth", GoogleAuthSettings())
         if "recon" not in kwargs:

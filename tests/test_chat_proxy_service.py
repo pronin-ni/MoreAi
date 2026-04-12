@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.integrations.types import ResolvedModel
-from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse, Choice, Message, Usage
+from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse, ChatMessage, Choice, Message, Usage
 from app.services.chat_proxy_service import ChatProxyService
 
 
@@ -141,3 +141,42 @@ class TestChatProxyService:
             request, "req-3", "agent/opencode/openai/gpt-4", "opencode"
         )
         assert response.model == "agent/opencode/openai/gpt-4"
+
+    @pytest.mark.asyncio
+    async def test_routes_kilocode_agent_model(self):
+        """Kilocode agent model should route to agent completion service."""
+        service = ChatProxyService()
+        request = ChatCompletionRequest(
+            model="agent/kilocode/kilocode/some-model",
+            messages=[ChatMessage(role="user", content="Hi")],
+        )
+        resolved = ResolvedModel(
+            requested_id=request.model,
+            canonical_id="agent/kilocode/kilocode/some-model",
+            provider_id="kilocode",
+            transport="agent",
+            source_type="kilocode_server",
+            execution_strategy="agent_completion",
+        )
+        expected = ChatCompletionResponse(
+            id="resp", created=123, model="agent/kilocode/kilocode/some-model",
+            choices=[Choice(index=0, message=Message(role="assistant", content="Kilo"), finish_reason="stop")],
+            usage=Usage(),
+        )
+
+        with (
+            patch(
+                "app.services.chat_proxy_service.unified_registry.resolve_model",
+                return_value=resolved,
+            ),
+            patch(
+                "app.services.chat_proxy_service.agent_completion_service.process_completion",
+                new=AsyncMock(return_value=expected),
+            ) as mock_agent_completion,
+        ):
+            response = await service.process_completion(request, request_id="req-4")
+
+        mock_agent_completion.assert_awaited_once_with(
+            request, "req-4", "agent/kilocode/kilocode/some-model", "kilocode"
+        )
+        assert response.model == "agent/kilocode/kilocode/some-model"

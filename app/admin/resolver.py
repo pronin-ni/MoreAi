@@ -291,8 +291,9 @@ def _base_for_provider(provider_id: str) -> dict[str, Any]:
     if provider_id_lower in browser_providers:
         base["concurrency_limit"] = settings.browser_pool_size
         base["priority"] = 0
-    elif provider_id_lower in ("opencode",):
-        base["concurrency_limit"] = None  # no concurrency limit for agent
+    elif provider_id_lower.endswith("_agent") or _is_agent_provider(provider_id_lower):
+        # Generic agent provider — no concurrency limit
+        base["concurrency_limit"] = None
         base["priority"] = 0
     else:
         # API providers
@@ -300,6 +301,17 @@ def _base_for_provider(provider_id: str) -> dict[str, Any]:
         base["priority"] = 0
 
     return base
+
+
+def _is_agent_provider(provider_id: str) -> bool:
+    """Check if a provider ID belongs to an agent provider."""
+    try:
+        from app.agents.registry import registry as agent_registry
+        return provider_id in agent_registry._providers or any(
+            p.provider_id == provider_id for p in agent_registry._pending_providers
+        )
+    except Exception:
+        return False
 
 
 class ConfigResolverCompat:

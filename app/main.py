@@ -38,7 +38,11 @@ async def lifespan(app: FastAPI):
     logger.info("Unified registry initialized")
 
     # Register known providers/models with config manager for validation
-    known_providers = set(browser_registry._providers) | set(api_registry._adapters) | {"opencode"}
+    # Collect agent provider IDs dynamically from agent registry
+    agent_provider_ids = set(agent_registry._providers.keys()) | set(
+        p.provider_id for p in agent_registry._pending_providers
+    )
+    known_providers = set(browser_registry._providers) | set(api_registry._adapters) | agent_provider_ids
     known_models = set()
     for m in unified_registry.list_models():
         known_models.add(m["id"])
@@ -115,11 +119,19 @@ async def lifespan(app: FastAPI):
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")
 
-    # Shutdown managed OpenCode subprocess
-    from app.agents.opencode.provider import provider as opencode_provider
-
-    await opencode_provider.shutdown()
-    logger.info("OpenCode provider shutdown complete")
+    # Shutdown all managed agent providers dynamically
+    from app.agents.registry import registry as agent_registry
+    for provider_id, provider in list(agent_registry._providers.items()):
+        if hasattr(provider, "shutdown"):
+            try:
+                await provider.shutdown()
+                logger.info("Agent provider shutdown complete", provider_id=provider_id)
+            except Exception as exc:
+                logger.warning(
+                    "Agent provider shutdown failed",
+                    provider_id=provider_id,
+                    error=str(exc),
+                )
 
 
 app = FastAPI(

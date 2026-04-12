@@ -1,279 +1,30 @@
-import asyncio
-import contextlib
-import os
-import time
-from typing import Any
+"""
+OpenCode-specific managed runtime — thin wrapper around shared ManagedAgentRuntime.
 
-import httpx
+OpenCode uses:
+- command: "opencode"
+- password env: OPENCODE_SERVER_PASSWORD
+- defaults from settings.opencode
+"""
 
+from app.agents.runtime import ManagedAgentRuntime
 from app.core.config import settings
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
 
 
-class ManagedAgentRuntime:
-    """
-    Manages the lifecycle of an external agent subprocess (e.g., opencode serve).
+class OpenCodeAgentRuntime(ManagedAgentRuntime):
+    """Managed runtime for OpenCode server with defaults from settings.opencode."""
 
-    Handles:
-    - Spawning the subprocess with proper env/args
-    - Polling readiness via HTTP healthcheck
-    - Graceful shutdown (SIGTERM → SIGKILL)
-    - Diagnostics (PID, uptime, exit code, stdout tail)
-    """
-
-    def __init__(
-        self,
-        command: str | None = None,
-        port: int | None = None,
-        startup_timeout: int | None = None,
-        healthcheck_interval: int | None = None,
-        graceful_shutdown: int | None = None,
-        working_dir: str | None = None,
-        extra_env: dict[str, str] | None = None,
-        base_url: str | None = None,
-        username: str | None = None,
-        password: str | None = None,
-    ):
-        self.command = command or settings.opencode.command
-        self.port = port or settings.opencode.port
-        self.startup_timeout = startup_timeout or settings.opencode.startup_timeout_seconds
-        self.healthcheck_interval = healthcheck_interval or settings.opencode.healthcheck_interval_seconds
-        self.graceful_shutdown = graceful_shutdown or settings.opencode.graceful_shutdown_seconds
-        self.working_dir = working_dir or settings.opencode.working_dir
-        self.extra_env = extra_env or settings.opencode.extra_env
-        self.base_url = (base_url or settings.opencode.base_url).rstrip("/")
-        self.username = username or settings.opencode.username
-        self.password = password or settings.opencode.password
-
-        self._process: asyncio.subprocess.Process | None = None
-        self._start_time: float | None = None
-        self._stdout_buffer: list[str] = []
-        self._stderr_buffer: list[str] = []
-        self._stdout_tail_max = 20  # Keep last N lines for diagnostics
-        self._exit_code: int | None = None
-        self._error: str | None = None
-        self._io_tasks: list[asyncio.Task] = []
-
-    @property
-    def pid(self) -> int | None:
-        return self._process.pid if self._process else None
-
-    @property
-    def uptime_seconds(self) -> float | None:
-        if self._start_time is None:
-            return None
-        return time.monotonic() - self._start_time
-
-    @property
-    def is_running(self) -> bool:
-        if self._process is None:
-            return False
-        return self._process.returncode is None
-
-    async def is_healthy(self) -> bool:
-        """Check if the subprocess is running AND responding to healthcheck."""
-        if not self.is_running:
-            return False
-        try:
-            auth = (self.username, self.password) if self.password else None
-            async with httpx.AsyncClient(timeout=5, auth=auth) as client:
-                response = await client.get(f"{self.base_url}/global/health")
-                if response.status_code != 200:
-                    return False
-                data = response.json()
-                return data.get("healthy", False)
-        except Exception:
-            return False
-
-    async def start(self) -> bool:
-        """
-        Spawn the subprocess and wait until it's healthy.
-
-        Returns True if the server became healthy, False otherwise.
-        """
-        if self.is_running:
-            logger.warning(
-                "ManagedAgentRuntime: process already running, skipping start",
-                pid=self.pid,
-            )
-            return True
-
-        cmd = [self.command, "serve", "--port", str(self.port)]
-        env = os.environ.copy()
-        env.update(self.extra_env)
-
-        # Set OPENCODE_SERVER_PASSWORD if password is provided (so opencode serve uses it)
-        if self.password:
-            env["OPENCODE_SERVER_PASSWORD"] = self.password
-
-        cwd = self.working_dir or None
-
-        logger.info(
-            "ManagedAgentRuntime: starting subprocess",
-            command=" ".join(cmd),
-            port=self.port,
-            working_dir=cwd,
+    def __init__(self):
+        super().__init__(
+            command=settings.opencode.command,
+            port=settings.opencode.port,
+            base_url=settings.opencode.base_url,
+            username=settings.opencode.username,
+            password=settings.opencode.password,
+            startup_timeout=settings.opencode.startup_timeout_seconds,
+            healthcheck_interval=settings.opencode.healthcheck_interval_seconds,
+            graceful_shutdown=settings.opencode.graceful_shutdown_seconds,
+            working_dir=settings.opencode.working_dir,
+            extra_env=settings.opencode.extra_env,
+            server_password_env="OPENCODE_SERVER_PASSWORD",
         )
-
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                cwd=cwd,
-            )
-
-            # Start stdout/stderr readers
-            self._io_tasks = [
-                asyncio.create_task(self._read_stream(self._process.stdout, self._stdout_buffer)),
-                asyncio.create_task(self._read_stream(self._process.stderr, self._stderr_buffer)),
-            ]
-
-            self._start_time = time.monotonic()
-            self._exit_code = None
-            self._error = None
-
-        except FileNotFoundError as exc:
-            self._error = f"Command not found: {self.command}"
-            logger.error(
-                "ManagedAgentRuntime: command not found",
-                command=self.command,
-                error=str(exc),
-            )
-            return False
-        except Exception as exc:
-            self._error = f"Failed to start subprocess: {exc}"
-            logger.exception("ManagedAgentRuntime: failed to start subprocess")
-            return False
-
-        # Wait until healthy
-        return await self.wait_until_healthy()
-
-    async def wait_until_healthy(self) -> bool:
-        """Poll healthcheck until healthy or timeout."""
-        if not self.is_running:
-            return False
-
-        deadline = time.monotonic() + self.startup_timeout
-        attempt = 0
-
-        while time.monotonic() < deadline:
-            attempt += 1
-
-            # Check if process died
-            if not self.is_running:
-                self._error = f"Process exited prematurely with code {self._exit_code}"
-                logger.error(
-                    "ManagedAgentRuntime: process exited before becoming healthy",
-                    exit_code=self._exit_code,
-                )
-                return False
-
-            if await self.is_healthy():
-                logger.info(
-                    "ManagedAgentRuntime: server is healthy",
-                    pid=self.pid,
-                    attempts=attempt,
-                    startup_seconds=time.monotonic() - self._start_time,
-                )
-                return True
-
-            await asyncio.sleep(self.healthcheck_interval)
-
-        self._error = f"Healthcheck timed out after {self.startup_timeout}s"
-        logger.error(
-            "ManagedAgentRuntime: healthcheck timed out",
-            timeout_seconds=self.startup_timeout,
-            pid=self.pid,
-            attempts=attempt,
-        )
-        return False
-
-    async def stop(self) -> None:
-        """Gracefully stop the subprocess (SIGTERM → SIGKILL)."""
-        if self._process is None:
-            return
-
-        if not self.is_running:
-            await self._cleanup()
-            return
-
-        logger.info(
-            "ManagedAgentRuntime: stopping subprocess",
-            pid=self.pid,
-            grace_period=self.graceful_shutdown,
-        )
-
-        try:
-            # Send SIGTERM
-            self._process.terminate()
-
-            # Wait for graceful shutdown
-            try:
-                await asyncio.wait_for(
-                    self._process.wait(),
-                    timeout=self.graceful_shutdown,
-                )
-            except TimeoutError:
-                logger.warning(
-                    "ManagedAgentRuntime: graceful shutdown timed out, sending SIGKILL",
-                    pid=self.pid,
-                )
-                self._process.kill()
-                await self._process.wait()
-
-        except ProcessLookupError:
-            # Process already gone
-            pass
-        except Exception as exc:
-            logger.warning(
-                "ManagedAgentRuntime: error during shutdown",
-                pid=self.pid,
-                error=str(exc),
-            )
-
-        await self._cleanup()
-
-    async def _read_stream(self, stream: asyncio.StreamReader, buffer: list[str]) -> None:
-        """Read lines from a stream and keep the tail."""
-        try:
-            async for line_bytes in stream:
-                line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    buffer.append(line)
-                    # Keep only the tail
-                    if len(buffer) > self._stdout_tail_max:
-                        buffer.pop(0)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logger.debug("ManagedAgentRuntime: stream reader error", error=str(exc))
-
-    async def _cleanup(self) -> None:
-        """Clean up resources."""
-        for task in self._io_tasks:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
-        self._io_tasks.clear()
-
-        if self._process:
-            self._exit_code = self._process.returncode
-            self._process = None
-
-    def diagnostics(self) -> dict[str, Any]:
-        """Return diagnostic information about the managed process."""
-        return {
-            "managed": True,
-            "process": {
-                "status": "running" if self.is_running else "stopped",
-                "pid": self.pid,
-                "uptime_seconds": round(self.uptime_seconds, 1) if self.uptime_seconds else None,
-                "exit_code": self._exit_code,
-                "error": self._error,
-                "stdout_tail": self._stdout_buffer[-5:],  # Last 5 lines
-            },
-        }
