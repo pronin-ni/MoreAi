@@ -18,6 +18,45 @@ from app.utils.openai_mapper import create_completion_response
 logger = get_logger(__name__)
 
 
+# ── Model type detection ──
+# Infer model purpose from name patterns to filter out non-chat models
+# during discovery. This prevents audio/image/embedding models from
+# being selected as chat completion candidates.
+
+_MODEL_TYPE_PATTERNS: list[tuple[tuple[str, ...], str]] = [
+    # Audio / speech-to-text
+    (("whisper", "stt-", "audio-", "speech-", "-stt", "-transcribe", "-transcript"), "audio"),
+    # Text-to-speech
+    (("tts-", "-tts", "speech-synthesis", "voice-synthesis"), "tts"),
+    # Image generation / processing
+    (("dall-e", "dall_e", "image-", "-image", "-img", "stable-diffusion", "flux-", "sdxl", "midjourney"), "image"),
+    # Embeddings
+    (("embed", "-embedding", "embedding-"), "embedding"),
+    # Moderation
+    (("moderat", "omni-moderation"), "moderation"),
+    # Video
+    (("video-", "-video", "sora", "veo"), "video"),
+]
+
+
+def infer_model_type(model_id: str) -> str:
+    """Infer model purpose from its ID.
+
+    Returns one of: chat, audio, tts, image, embedding, moderation, video.
+    Defaults to 'chat' if no pattern matches.
+    """
+    name = model_id.lower()
+    for patterns, model_type in _MODEL_TYPE_PATTERNS:
+        if any(p in name for p in patterns):
+            return model_type
+    return "chat"
+
+
+def is_chat_model(model_id: str) -> bool:
+    """Check if a model ID is likely a text chat model."""
+    return infer_model_type(model_id) == "chat"
+
+
 class BaseIntegrationAdapter:
     transport = "api"
 
@@ -167,6 +206,7 @@ class BaseIntegrationAdapter:
                     "base_url": self.runtime_config.base_url,
                     "notes": self.definition.notes,
                     "requires_api_key": self.definition.api_key_requirement == "required",
+                    "model_type": infer_model_type(model_name),
                     **({"fallback": True} if fallback else {}),
                     **metadata_by_model.get(model_name, {}),
                 },
@@ -218,11 +258,28 @@ class OpenAICompatibleIntegration(BaseIntegrationAdapter):
             self._set_refresh_status("empty")
             return self._fallback_model_definitions(available=False)
 
+        # Filter out non-chat models (audio, image, embedding, etc.)
+        # to prevent them from being selected as chat completion candidates
+        chat_models = [m for m in discovered_models if is_chat_model(m)]
+        filtered_out = [m for m in discovered_models if not is_chat_model(m)]
+
+        if filtered_out:
+            logger.info(
+                "Non-chat models filtered out during discovery",
+                integration_id=self.definition.integration_id,
+                filtered_count=str(len(filtered_out)),
+                filtered_models=", ".join(filtered_out[:10]) + ("..." if len(filtered_out) > 10 else ""),
+            )
+
+        # Use chat models if available, otherwise fall back to all models
+        # (so the integration is not completely empty)
+        models_to_register = chat_models if chat_models else discovered_models
+
         self.status.available = True
         self.status.models_probe_ok = True
         self.status.disabled_reason = None
-        self._set_refresh_status("ok", discovered_models=discovered_models)
-        return self._build_model_definitions(discovered_models, available=True)
+        self._set_refresh_status("ok", discovered_models=models_to_register)
+        return self._build_model_definitions(models_to_register, available=True)
 
     async def create_chat_completion(
         self,
