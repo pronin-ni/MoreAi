@@ -478,11 +478,15 @@ async def _execute_studio_pipeline(
         content = response.choices[0].message.content if response.choices else ""
         conversation.append({"role": "assistant", "content": content, "timestamp": time.time()})
 
+        # Extract execution_id from response.id (format: "pipeline-{trace_id}")
+        exec_id = response.id.replace("pipeline-", "", 1) if response.id.startswith("pipeline-") else ""
+
         return _render_studio_response(
             messages=_build_render_messages(conversation),
             conversation=conversation,
             mode=mode,
             execution={
+                "execution_id": exec_id,
                 "execution_type": "pipeline",
                 "target_model": f"pipeline/{pipeline_id}",
                 "used_model": f"pipeline/{pipeline_id}",
@@ -648,6 +652,8 @@ def _render_studio_response(
     """Render the studio chat response with OOB swaps."""
     policy = get_mode_policy(mode)
     mode_label = policy.get("label", mode)
+    exec_data = execution or {}
+    execution_id = exec_data.get("execution_id", "")
 
     html = _render_template(
         "partials/studio_response.html",
@@ -655,7 +661,8 @@ def _render_studio_response(
         conversation=conversation or [],
         mode=mode,
         mode_label=mode_label,
-        execution=execution or {},
+        execution=exec_data,
+        execution_id=execution_id,
         status=status,
         error_message=error_message,
     )
