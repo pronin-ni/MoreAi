@@ -26,6 +26,11 @@ class BrowserJobResult:
     queue_wait_seconds: float
     execution_seconds: float
     retry_count: int
+    # Per-attempt breakdown (populated when retries occur)
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    # Whether a runtime restart occurred during execution
+    restart_occurred: bool = False
+    restart_reason: str = ""
 
 
 @dataclass(slots=True)

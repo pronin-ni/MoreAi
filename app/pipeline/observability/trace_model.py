@@ -130,6 +130,12 @@ class StageExecutionSummary:
     retry_count: int = 0
     fallback_count: int = 0
 
+    # Per-attempt breakdown
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    successful_attempt_duration_ms: float = 0
+    restart_occurred: bool = False
+    restart_reason: str = ""
+
     # Concise summaries (bounded to 500 chars)
     input_summary: str = ""
     output_summary: str = ""
@@ -181,6 +187,14 @@ class StageExecutionSummary:
             result["quality_explanation"] = self.quality_explanation
         if self.cross_stage:
             result["cross_stage"] = self.cross_stage
+
+        # Per-attempt breakdown
+        if self.attempts:
+            result["attempts"] = self.attempts
+            result["successful_attempt_duration_ms"] = round(self.successful_attempt_duration_ms, 1)
+            result["restart_occurred"] = self.restart_occurred
+            if self.restart_reason:
+                result["restart_reason"] = self.restart_reason
 
         return result
 

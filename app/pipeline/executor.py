@@ -29,6 +29,7 @@ from app.pipeline.builtin_pipelines import register_builtin_pipelines
 from app.pipeline.diagnostics import pipeline_diagnostics
 from app.pipeline.prompt_builder import build_stage_prompt
 from app.pipeline.types import (
+    AttemptTrace,
     FailurePolicy,
     PipelineContext,
     PipelineDefinition,
@@ -244,6 +245,8 @@ class PipelineExecutor:
             trace = self._begin_stage_trace(stage_def, ctx.trace.trace_id)
             trace.retry_count = attempt
 
+            attempt_start = time.monotonic()
+
             if attempt > 0:
                 trace.status = "retried"
                 logger.info(
@@ -269,17 +272,47 @@ class PipelineExecutor:
                 trace.duration_ms = result.duration_ms
                 trace.completed_at = time.monotonic()
                 trace.result_summary = result.output[:200]
+
+                # Record attempt-level data
+                attempt_duration_ms = (time.monotonic() - attempt_start) * 1000
+                attempt_trace = AttemptTrace(
+                    attempt_number=attempt,
+                    started_at=attempt_start,
+                    ended_at=trace.completed_at,
+                    duration_ms=attempt_duration_ms,
+                    result="success",
+                    failure_reason="",
+                    restart_occurred=getattr(result, 'restart_occurred', False),
+                    restart_reason=getattr(result, 'restart_reason', ''),
+                )
+                trace.attempts.append(attempt_trace)
+                if attempt == 0 and not result.restart_occurred:
+                    # Single-attempt success
+                    trace.successful_attempt_duration_ms = attempt_duration_ms
+                else:
+                    trace.successful_attempt_duration_ms = attempt_duration_ms
+                    trace.restart_occurred = result.restart_occurred
+                    trace.restart_reason = result.restart_reason
+
                 ctx.trace.stage_traces.append(trace)
 
-                logger.info(
-                    "stage_completed",
-                    request_id=request_id,
-                    pipeline_id=ctx.trace.pipeline_id,
-                    stage_id=stage_def.stage_id,
-                    role=stage_def.role.value,
-                    provider=result.provider_id,
-                    duration_ms=str(round(result.duration_ms, 1)),
-                )
+                log_fields: dict[str, str] = {
+                    "request_id": request_id,
+                    "pipeline_id": ctx.trace.pipeline_id,
+                    "stage_id": stage_def.stage_id,
+                    "role": stage_def.role.value,
+                    "provider": result.provider_id,
+                    "total_duration_ms": str(round(result.duration_ms, 1)),
+                }
+                if result.restart_occurred:
+                    log_fields["restart_occurred"] = "true"
+                    log_fields["restart_reason"] = result.restart_reason
+                if result.successful_attempt_duration_ms > 0 and result.attempts:
+                    log_fields["successful_attempt_duration_ms"] = str(
+                        round(result.successful_attempt_duration_ms, 1))
+                    log_fields["retry_count"] = str(len(result.attempts) - 1)
+
+                logger.info("stage_completed", **log_fields)
 
                 # Record stage metrics
                 pipeline_stage_executions_total.inc(
@@ -307,9 +340,21 @@ class PipelineExecutor:
             except Exception as exc:
                 last_error = str(exc)
                 last_error_type = type(exc).__name__
+                attempt_duration_ms = (time.monotonic() - attempt_start) * 1000
                 trace.status = "failed"
                 trace.error_message = last_error
                 trace.completed_at = time.monotonic()
+
+                # Record failed attempt
+                failed_attempt_trace = AttemptTrace(
+                    attempt_number=attempt,
+                    started_at=attempt_start,
+                    ended_at=trace.completed_at,
+                    duration_ms=attempt_duration_ms,
+                    result="failed",
+                    failure_reason=last_error_type,
+                )
+                trace.attempts.append(failed_attempt_trace)
 
                 if attempt == max_retries:
                     trace.duration_ms = (trace.completed_at - trace.started_at) * 1000
@@ -790,6 +835,28 @@ class PipelineExecutor:
 
         duration_ms = (time.monotonic() - stage_start) * 1000
 
+        # Extract browser-level attempt data if present
+        attempts: list[AttemptTrace] = []
+        successful_attempt_duration_ms = 0.0
+        restart_occurred = False
+        restart_reason = ""
+
+        if hasattr(response, '_browser_attempts') and response._browser_attempts:
+            for a in response._browser_attempts:
+                attempts.append(AttemptTrace(
+                    attempt_number=a.get("attempt_number", 0),
+                    started_at=a.get("started_at", 0),
+                    ended_at=a.get("ended_at", 0),
+                    duration_ms=a.get("duration_ms", 0),
+                    result=a.get("result", "unknown"),
+                    failure_reason=a.get("failure_reason", ""),
+                    restart_occurred=a.get("restart_occurred", False),
+                    restart_reason=a.get("restart_reason", ""),
+                ))
+            successful_attempt_duration_ms = attempts[-1].duration_ms if attempts else duration_ms
+            restart_occurred = getattr(response, '_browser_restart_occurred', False)
+            restart_reason = getattr(response, '_browser_restart_reason', '')
+
         result = StageResult(
             stage_id=stage_def.stage_id,
             role=stage_def.role,
@@ -798,6 +865,10 @@ class PipelineExecutor:
             output=output_text,
             success=True,
             duration_ms=duration_ms,
+            attempts=attempts,
+            successful_attempt_duration_ms=successful_attempt_duration_ms or duration_ms,
+            restart_occurred=restart_occurred,
+            restart_reason=restart_reason,
         )
 
         # Store in context for next stages

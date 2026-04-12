@@ -5,9 +5,9 @@ from app.browser.auth import auth_bootstrapper
 from app.browser.execution.errors import ExecutionTimeoutError, RetryableBrowserTaskError
 from app.browser.execution.models import BrowserJob, BrowserJobResult
 from app.browser.execution.runtime import WorkerBrowserRuntime
-from app.browser.registry import registry as browser_registry
 from app.browser.recon import FailureCategory, classify_failure
 from app.browser.recon.manager import attempt_recon_recovery
+from app.browser.registry import registry as browser_registry
 from app.browser.telemetry import browser_telemetry
 from app.core.config import settings
 from app.core.errors import BrowserError, InternalError
@@ -21,7 +21,16 @@ class BrowserProviderExecutor:
         self.runtime = runtime
         self.on_runtime_restart = on_runtime_restart
 
-    async def _restart_runtime(self) -> None:
+    async def _restart_runtime(self, reason: str = "", request_id: str = "", task_id: str = "", attempt: int = 0) -> None:
+        """Restart the browser runtime with explicit reason tracking."""
+        logger.warning(
+            "Restarting browser runtime",
+            worker_name=self.runtime.worker_name,
+            reason=reason or "unspecified",
+            request_id=request_id,
+            task_id=task_id,
+            attempt=str(attempt + 1),
+        )
         await self.runtime.restart()
         if self.on_runtime_restart is not None:
             self.on_runtime_restart()
@@ -65,10 +74,16 @@ class BrowserProviderExecutor:
         auth_state_invalidated = False
         started_at = time.monotonic()
         request_start = browser_telemetry.start_request(provider_class.provider_id)
+        restart_occurred = False
+        restart_reason = ""
 
         for attempt in range(request.max_retries + 1):
             if job.is_cancelled():
                 raise asyncio.CancelledError()
+
+            attempt_start = time.monotonic()
+            attempt_result = "pending"
+            attempt_failure_reason = ""
 
             try:
                 storage_state_path = await auth_bootstrapper.ensure_model_authenticated(
@@ -92,6 +107,7 @@ class BrowserProviderExecutor:
                             timeout=request.execution_timeout_seconds
                         )
                         finished_at = time.monotonic()
+                        attempt_result = "success"
                         browser_telemetry.end_request(provider_class.provider_id, request_start)
                         return BrowserJobResult(
                             content=content,
@@ -100,13 +116,29 @@ class BrowserProviderExecutor:
                             queue_wait_seconds=started_at - job.enqueued_at,
                             execution_seconds=finished_at - started_at,
                             retry_count=attempt,
+                            attempts=[{
+                                "attempt_number": attempt,
+                                "started_at": attempt_start,
+                                "ended_at": finished_at,
+                                "duration_ms": (finished_at - attempt_start) * 1000,
+                                "result": "success",
+                                "failure_reason": "",
+                                "restart_occurred": restart_occurred,
+                                "restart_reason": restart_reason,
+                            }],
+                            restart_occurred=restart_occurred,
+                            restart_reason=restart_reason,
                         )
             except TimeoutError as exc:
+                attempt_duration_ms = (time.monotonic() - attempt_start) * 1000
+                attempt_result = "timeout"
+                attempt_failure_reason = "execution_timeout"
                 logger.warning(
                     "Browser task execution timed out",
                     task_id=request.task_id,
                     provider_id=request.provider_id,
                     attempt=attempt + 1,
+                    attempt_duration_ms=str(round(attempt_duration_ms, 1)),
                 )
                 last_error = ExecutionTimeoutError(
                     f"Browser task timed out after {request.execution_timeout_seconds} seconds",
@@ -125,7 +157,14 @@ class BrowserProviderExecutor:
 
                 if attempt < request.max_retries:
                     job.retry_count += 1
-                    await self._restart_runtime()
+                    restart_occurred = True
+                    restart_reason = "timeout"
+                    await self._restart_runtime(
+                        reason="timeout",
+                        request_id=request.request_id,
+                        task_id=request.task_id,
+                        attempt=attempt,
+                    )
                     await asyncio.sleep(
                         min(
                             settings.browser_retry_backoff_seconds * (2**attempt),
@@ -144,8 +183,11 @@ class BrowserProviderExecutor:
                     },
                 ) from exc
             except BrowserError as exc:
+                attempt_duration_ms = (time.monotonic() - attempt_start) * 1000
                 last_error = exc
                 retryable, failure_kind = self._classify_browser_error(exc)
+                attempt_result = "failed"
+                attempt_failure_reason = type(exc).__name__
                 auth_wall_detected = False
 
                 if "provider" in locals():
@@ -221,6 +263,7 @@ class BrowserProviderExecutor:
                                     timeout=request.execution_timeout_seconds
                                 )
                                 finished_at = time.monotonic()
+                                attempt_result = "success"
                                 browser_telemetry.end_request(provider_class.provider_id, request_start)
                                 return BrowserJobResult(
                                     content=content,
@@ -229,6 +272,18 @@ class BrowserProviderExecutor:
                                     queue_wait_seconds=started_at - job.enqueued_at,
                                     execution_seconds=finished_at - started_at,
                                     retry_count=attempt,
+                                    attempts=[{
+                                        "attempt_number": attempt,
+                                        "started_at": attempt_start,
+                                        "ended_at": finished_at,
+                                        "duration_ms": (finished_at - attempt_start) * 1000,
+                                        "result": "success",
+                                        "failure_reason": "",
+                                        "restart_occurred": restart_occurred,
+                                        "restart_reason": restart_reason,
+                                    }],
+                                    restart_occurred=restart_occurred,
+                                    restart_reason=restart_reason,
                                 )
                             except Exception:
                                 pass  # Recon helped but response still failed — fall through
@@ -257,11 +312,19 @@ class BrowserProviderExecutor:
                     error=str(exc),
                     retryable=retryable,
                     failure_kind=failure_kind,
+                    attempt_duration_ms=str(round(attempt_duration_ms, 1)),
                 )
 
                 if retryable and attempt < request.max_retries:
                     job.retry_count += 1
-                    await self._restart_runtime()
+                    restart_occurred = True
+                    restart_reason = failure_kind
+                    await self._restart_runtime(
+                        reason=failure_kind,
+                        request_id=request.request_id,
+                        task_id=request.task_id,
+                        attempt=attempt,
+                    )
                     await asyncio.sleep(
                         min(
                             settings.browser_retry_backoff_seconds * (2**attempt),
@@ -287,13 +350,24 @@ class BrowserProviderExecutor:
                 )
                 raise
             except Exception as exc:
+                attempt_duration_ms = (time.monotonic() - attempt_start) * 1000
+                attempt_result = "error"
+                attempt_failure_reason = f"unexpected:{type(exc).__name__}"
                 logger.exception(
                     "Unexpected browser execution error",
                     task_id=request.task_id,
                     provider_id=request.provider_id,
                     error=str(exc),
+                    attempt_duration_ms=str(round(attempt_duration_ms, 1)),
                 )
-                await self._restart_runtime()
+                restart_occurred = True
+                restart_reason = f"unexpected_error:{type(exc).__name__}"
+                await self._restart_runtime(
+                    reason=f"unexpected_error:{type(exc).__name__}",
+                    request_id=request.request_id,
+                    task_id=request.task_id,
+                    attempt=attempt,
+                )
                 raise InternalError(
                     f"Unexpected browser execution error: {str(exc)}",
                     details={

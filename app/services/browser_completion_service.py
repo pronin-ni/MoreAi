@@ -33,6 +33,8 @@ class BrowserCompletionService:
             queue_wait_seconds=result.queue_wait_seconds,
             execution_seconds=result.execution_seconds,
             retry_count=result.retry_count,
+            restart_occurred=getattr(result, 'restart_occurred', False),
+            restart_reason=getattr(result, 'restart_reason', ''),
         )
 
         # Record metrics
@@ -42,7 +44,14 @@ class BrowserCompletionService:
             provider=provider_class.provider_id,
         )
 
-        return create_completion_response(model=canonical_model_id, content=result.content)
+        response = create_completion_response(model=canonical_model_id, content=result.content)
+        # Attach browser-level attempt data for observability
+        if hasattr(result, 'attempts') and result.attempts:
+            response._browser_attempts = result.attempts
+            response._browser_restart_occurred = result.restart_occurred
+            response._browser_restart_reason = result.restart_reason
+
+        return response
 
 
 browser_completion_service = BrowserCompletionService()

@@ -131,6 +131,28 @@ class PipelineDefinition(BaseModel):
             object.__setattr__(self, "model_id", f"pipeline/{self.pipeline_id}")
 
 
+# ── Attempt Trace ──
+
+
+@dataclass
+class AttemptTrace:
+    """Trace of a single execution attempt within a stage.
+
+    Captures per-attempt timing and outcome so that total stage
+    duration can be distinguished from the successful attempt's
+    own duration.
+    """
+
+    attempt_number: int = 0
+    started_at: float = 0
+    ended_at: float = 0
+    duration_ms: float = 0
+    result: str = "pending"  # success, failed, timeout, restarted
+    failure_reason: str = ""
+    restart_occurred: bool = False
+    restart_reason: str = ""
+
+
 # ── Stage Result ──
 
 
@@ -148,6 +170,14 @@ class StageResult(BaseModel):
     duration_ms: float = 0
     retry_count: int = 0
     artifacts: dict[str, Any] = Field(default_factory=dict)
+
+    # Per-attempt breakdown (populated when retries occur)
+    attempts: list[AttemptTrace] = Field(default_factory=list)
+    # Duration of the successful attempt (0 if no success)
+    successful_attempt_duration_ms: float = 0
+    # Whether a runtime restart occurred during this stage
+    restart_occurred: bool = False
+    restart_reason: str = ""
 
 
 # ── Stage Trace ──
@@ -167,6 +197,14 @@ class StageTrace(BaseModel):
     retry_count: int = 0
     error_message: str | None = None
     result_summary: str = ""
+
+    # Per-attempt breakdown
+    attempts: list[AttemptTrace] = Field(default_factory=list)
+    # Duration of the successful attempt
+    successful_attempt_duration_ms: float = 0
+    # Runtime restart info
+    restart_occurred: bool = False
+    restart_reason: str = ""
 
 
 # ── Pipeline Trace ──

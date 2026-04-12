@@ -417,6 +417,45 @@ class ObservabilityRecorder:
         if stage_trace and stage_trace.retry_count > retry_count:
             retry_count = stage_trace.retry_count
 
+        # Per-attempt data
+        attempts_data: list[dict[str, Any]] = []
+        successful_attempt_duration_ms = 0.0
+        restart_occurred = False
+        restart_reason = ""
+
+        if stage_result and stage_result.attempts:
+            # Use stage result attempt data
+            for a in stage_result.attempts:
+                attempts_data.append({
+                    "attempt_number": a.attempt_number,
+                    "started_at": a.started_at,
+                    "ended_at": a.ended_at,
+                    "duration_ms": round(a.duration_ms, 1),
+                    "result": a.result,
+                    "failure_reason": a.failure_reason,
+                    "restart_occurred": a.restart_occurred,
+                    "restart_reason": a.restart_reason,
+                })
+            successful_attempt_duration_ms = stage_result.successful_attempt_duration_ms
+            restart_occurred = stage_result.restart_occurred
+            restart_reason = stage_result.restart_reason
+        elif stage_trace and stage_trace.attempts:
+            # Use stage trace attempt data
+            for a in stage_trace.attempts:
+                attempts_data.append({
+                    "attempt_number": a.attempt_number,
+                    "started_at": a.started_at,
+                    "ended_at": a.ended_at,
+                    "duration_ms": round(a.duration_ms, 1),
+                    "result": a.result,
+                    "failure_reason": a.failure_reason,
+                    "restart_occurred": a.restart_occurred,
+                    "restart_reason": a.restart_reason,
+                })
+            successful_attempt_duration_ms = stage_trace.successful_attempt_duration_ms
+            restart_occurred = stage_trace.restart_occurred
+            restart_reason = stage_trace.restart_reason
+
         return StageExecutionSummary(
             stage_id=stage_def.stage_id,
             stage_role=stage_def.role.value,
@@ -435,6 +474,10 @@ class ObservabilityRecorder:
             error_type=error_type,
             stage_budget_ms=stage_def.timeout_override_ms,
             total_budget_ms=pipeline_def.max_total_time_ms,
+            attempts=attempts_data,
+            successful_attempt_duration_ms=successful_attempt_duration_ms,
+            restart_occurred=restart_occurred,
+            restart_reason=restart_reason,
         )
 
     def _build_selection_explain(

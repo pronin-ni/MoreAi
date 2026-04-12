@@ -74,6 +74,11 @@ async def lifespan(app: FastAPI):
     initialize_pipelines()
     logger.info("Pipeline subsystem initialized")
 
+    # Initialize persistent execution store eagerly (ensures schema exists)
+    from app.pipeline.observability.persistent_store import initialize_persistent_store
+    initialize_persistent_store()
+    logger.info("Persistent execution store initialized")
+
     # Initialize intelligence subsystem (capability tags)
     from app.intelligence.tags import capability_registry
     capability_registry.initialize()

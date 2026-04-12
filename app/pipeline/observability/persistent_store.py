@@ -3,12 +3,21 @@ Persistent pipeline execution store.
 
 Uses SQLite with a single table to store pipeline execution summaries
 and stage traces. Supports retention policy and bounded size.
+
+Bootstrap guarantees:
+- Schema is created on first access and at startup
+- Thread-safe lazy initialization
+- Idempotent CREATE TABLE IF NOT EXISTS
+- Schema versioning for future migrations
+- Clear logging at each stage
+- Graceful in-memory fallback only AFTER bootstrap attempt
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -54,11 +63,32 @@ CREATE INDEX IF NOT EXISTS idx_exec_created ON pipeline_executions(created_at);
 """
 
 
+def _ensure_schema(conn: sqlite3.Connection, db_path: str) -> bool:
+    """Run idempotent schema creation. Returns True on success."""
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.executescript(_CREATE_TABLE_SQL)
+        # executescript auto-commits, but we need a separate execute for PRAGMA with value
+        conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        conn.commit()
+        return True
+    except sqlite3.Error as exc:
+        logger.error("schema_bootstrap_failed", path=db_path, error=str(exc))
+        return False
+
+
 class PersistentExecutionStore:
     """SQLite-backed execution store with retention policy.
 
     Stores pipeline execution summaries and stage traces.
     Automatically enforces max count and max age retention.
+
+    Bootstrap:
+    - Schema is created in __init__ with idempotent CREATE TABLE IF NOT EXISTS
+    - Thread-safe lazy initialization via get_persistent_store()
+    - If disk DB fails, falls back to in-memory with clear logging
+    - Schema version recorded for future migration support
     """
 
     def __init__(
@@ -70,28 +100,49 @@ class PersistentExecutionStore:
         self._db_path = db_path
         self._max_executions = max_executions
         self._max_age_days = max_age_days
+        self._initialized = False
         self._init_db()
 
     def _init_db(self) -> None:
-        """Initialize database and create schema."""
+        """Initialize database, bootstrap schema, handle failures gracefully."""
         path = Path(self._db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         conn = self._connect()
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.executescript(_CREATE_TABLE_SQL)
-            conn.execute("PRAGMA user_version = ?", (_SCHEMA_VERSION,))
-            conn.commit()
+            success = _ensure_schema(conn, self._db_path)
+            if success:
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                logger.info(
+                    "persistent_execution_store_initialized",
+                    path=self._db_path,
+                    schema_version=str(version),
+                    mode="disk",
+                )
+                self._initialized = True
+            else:
+                self._fallback_to_memory()
         except sqlite3.Error as exc:
             logger.error("database_init_failed", path=self._db_path, error=str(exc))
-            # Create in-memory fallback
-            self._db_path = ":memory:"
-            conn = self._connect()
-            conn.executescript(_CREATE_TABLE_SQL)
-            conn.commit()
-            logger.warning("using_in_memory_store", reason="disk_failed")
+            self._fallback_to_memory()
+        finally:
+            conn.close()
+
+    def _fallback_to_memory(self) -> None:
+        """Switch to in-memory database as last resort."""
+        self._db_path = ":memory:"
+        conn = self._connect()
+        try:
+            success = _ensure_schema(conn, self._db_path)
+            if success:
+                logger.warning(
+                    "using_in_memory_store",
+                    reason="disk_bootstrap_failed",
+                    note="executions_will_not_persist_across_restarts",
+                )
+                self._initialized = True
+            else:
+                logger.error("in_memory_store_also_failed", reason="critical")
         finally:
             conn.close()
 
@@ -109,7 +160,12 @@ class PersistentExecutionStore:
         """
         stage_summaries = []
         for s in summary.stage_summaries:
-            stage_summaries.append(s.to_dict() if hasattr(s, "to_dict") else dict(s.__dict__))
+            if isinstance(s, dict):
+                stage_summaries.append(s)
+            elif hasattr(s, "to_dict"):
+                stage_summaries.append(s.to_dict())
+            else:
+                stage_summaries.append(dict(s.__dict__))
 
         conn = self._connect()
         try:
@@ -302,14 +358,33 @@ class PersistentExecutionStore:
         return d
 
 
-# Global singleton — lazy initialized
+# Global singleton — thread-safe lazy initialization
 _persistent_store: PersistentExecutionStore | None = None
+_store_lock = threading.Lock()
 
 
 def get_persistent_store() -> PersistentExecutionStore:
-    """Get the global persistent execution store, initializing if needed."""
+    """Get the global persistent execution store, initializing if needed.
+
+    Thread-safe: uses a lock to prevent double-initialization.
+    """
     global _persistent_store
     if _persistent_store is None:
-        _persistent_store = PersistentExecutionStore()
-        logger.info("persistent_execution_store_initialized")
+        with _store_lock:
+            if _persistent_store is None:
+                _persistent_store = PersistentExecutionStore()
     return _persistent_store
+
+
+def initialize_persistent_store() -> PersistentExecutionStore:
+    """Eagerly initialize the persistent store. Called at app startup.
+
+    Returns the store instance. Safe to call multiple times (idempotent).
+    """
+    global _persistent_store
+    if _persistent_store is not None:
+        return _persistent_store
+    with _store_lock:
+        if _persistent_store is None:
+            _persistent_store = PersistentExecutionStore()
+        return _persistent_store
