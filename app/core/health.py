@@ -53,16 +53,59 @@ def _check_api_registry() -> dict:
 
 
 def _check_agent_registry() -> dict:
-    """Check that the agent registry is initialized."""
+    """Check that the agent registry is initialized and report per-provider status."""
     try:
         from app.agents.registry import registry as agent_registry
+        from app.core.config import settings
 
         if not agent_registry._initialized:
             return {"status": "initializing"}
+
         models = agent_registry.list_models()
+        providers: dict[str, dict] = {}
+
+        for provider_id, provider in agent_registry._providers.items():
+            # Determine if this provider is required
+            is_required = False
+            if provider_id == "opencode":
+                is_required = settings.opencode.required
+            elif provider_id == "kilocode":
+                is_required = settings.kilocode.required
+
+            # Get provider-specific diagnostics
+            provider_available = getattr(provider, "_available", False)
+            provider_error = getattr(provider, "_error", None)
+            provider_mode = getattr(provider, "_mode", "unknown")
+            provider_model_count = len(getattr(provider, "_models", []))
+
+            # Get process status for managed providers
+            process_status = None
+            runtime = getattr(provider, "_runtime", None)
+            if runtime is not None:
+                process_status = {
+                    "status": "running" if getattr(runtime, "is_running", False) else "stopped",
+                    "pid": getattr(runtime, "pid", None),
+                    "uptime_seconds": getattr(runtime, "uptime_seconds", None),
+                }
+
+            providers[provider_id] = {
+                "available": provider_available,
+                "required": is_required,
+                "error": provider_error,
+                "mode": provider_mode,
+                "model_count": provider_model_count,
+                "process": process_status,
+            }
+
+        # Overall status: degraded if any required provider unavailable
+        any_required_unavailable = any(
+            p["required"] and not p["available"] for p in providers.values()
+        )
+
         return {
-            "status": "healthy" if models else "degraded",
+            "status": "unavailable" if any_required_unavailable else ("healthy" if models else "degraded"),
             "model_count": len(models),
+            "providers": providers,
         }
     except Exception as exc:
         logger.warning("Agent registry health check failed", error=str(exc))

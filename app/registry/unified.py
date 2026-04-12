@@ -6,7 +6,15 @@ import pkgutil
 import app.agents
 for _finder, agent_pkg_name, _ispkg in pkgutil.iter_modules(app.agents.__path__, app.agents.__name__ + "."):
     if agent_pkg_name.endswith(".provider"):
-        importlib.import_module(agent_pkg_name)
+        try:
+            importlib.import_module(agent_pkg_name)
+        except Exception as exc:
+            from app.core.logging import get_logger
+            get_logger(__name__).warning(
+                "Failed to import agent provider package",
+                package=agent_pkg_name,
+                error=str(exc),
+            )
 
 from app.agents.registry import registry as agent_registry
 from app.browser.registry import registry as browser_registry

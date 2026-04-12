@@ -10,6 +10,7 @@ import app.browser.providers  # noqa: F401
 from app.admin.config_manager import config_manager
 from app.admin.observer import observer
 from app.admin.router import router as admin_router
+from app.agents.registry import registry as agent_registry
 from app.api.rate_limit import RateLimitMiddleware
 from app.api.routes_home import router as home_router
 from app.api.routes_openai import router as openai_router
@@ -39,9 +40,9 @@ async def lifespan(app: FastAPI):
 
     # Register known providers/models with config manager for validation
     # Collect agent provider IDs dynamically from agent registry
-    agent_provider_ids = set(agent_registry._providers.keys()) | set(
+    agent_provider_ids = set(agent_registry._providers.keys()) | {
         p.provider_id for p in agent_registry._pending_providers
-    )
+    }
     known_providers = set(browser_registry._providers) | set(api_registry._adapters) | agent_provider_ids
     known_models = set()
     for m in unified_registry.list_models():
@@ -88,6 +89,12 @@ async def lifespan(app: FastAPI):
     model_discovery_service.start()
     logger.info("Model discovery service started")
 
+    # Start agent discovery service (periodic agent model refresh background task)
+    from app.services.agent_discovery import agent_discovery_service
+    await agent_discovery_service.discover_all()
+    agent_discovery_service.start()
+    logger.info("Agent discovery service started")
+
     yield
 
     logger.info("Shutting down MoreAI Proxy service")
@@ -116,11 +123,15 @@ async def lifespan(app: FastAPI):
     await model_discovery_service.stop()
     logger.info("Model discovery service stopped")
 
+    # Stop agent discovery service
+    from app.services.agent_discovery import agent_discovery_service
+    await agent_discovery_service.stop()
+    logger.info("Agent discovery service stopped")
+
     await browser_dispatcher.shutdown()
     logger.info("Browser dispatcher shutdown complete")
 
     # Shutdown all managed agent providers dynamically
-    from app.agents.registry import registry as agent_registry
     for provider_id, provider in list(agent_registry._providers.items()):
         if hasattr(provider, "shutdown"):
             try:

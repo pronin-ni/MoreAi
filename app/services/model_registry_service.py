@@ -115,11 +115,40 @@ class ModelRegistryService:
         api_models = [m for m in all_models if m.transport == "api"]
         agent_models = [m for m in all_models if m.transport == "agent"]
 
+        # Enrich agent models with provider status
+        agent_models = self._enrich_agent_models(agent_models)
+
         browser_models.sort(key=lambda m: m.display_name.lower())
         api_models.sort(key=lambda m: m.display_name.lower())
         agent_models.sort(key=lambda m: m.display_name.lower())
 
         return browser_models, api_models, agent_models
+
+    def _enrich_agent_models(self, agent_models: list[ModelViewModel]) -> list[ModelViewModel]:
+        """Add provider status metadata to agent models."""
+        try:
+            from app.agents.registry import registry as agent_registry
+
+            provider_status: dict[str, dict] = {}
+            for pid, provider in agent_registry._providers.items():
+                provider_status[pid] = {
+                    "provider_available": getattr(provider, "_available", False),
+                    "provider_mode": getattr(provider, "_mode", "unknown"),
+                    "provider_error": getattr(provider, "_error", None),
+                    "provider_model_count": len(getattr(provider, "_models", [])),
+                }
+
+            for model in agent_models:
+                pid = model.provider_id
+                status = provider_status.get(pid, {})
+                model.metadata["provider_available"] = status.get("provider_available", False)
+                model.metadata["provider_mode"] = status.get("provider_mode", "unknown")
+                model.metadata["provider_error"] = status.get("provider_error")
+        except Exception:
+            # If agent registry is not available, skip enrichment
+            pass
+
+        return agent_models
 
     def filter_models(self, query: str) -> list[ModelViewModel]:
         all_models = self.list_models()

@@ -119,6 +119,12 @@ class OpenCodeSettings(BaseSettings):
     working_dir: str | None = Field(default=None, description="Working directory for the subprocess")
     extra_env: dict[str, str] = Field(default_factory=dict, description="Additional environment variables for the subprocess")
     required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
+    discovery_refresh_interval_seconds: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description="Interval between periodic model re-discovery for this agent provider",
+    )
 
 
 class KilocodeSettings(BaseSettings):
@@ -152,6 +158,12 @@ class KilocodeSettings(BaseSettings):
     working_dir: str | None = Field(default=None, description="Working directory for the subprocess")
     extra_env: dict[str, str] = Field(default_factory=dict, description="Additional environment variables for the subprocess")
     required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
+    discovery_refresh_interval_seconds: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description="Interval between periodic model re-discovery for this agent provider",
+    )
 
 
 class ModelDiscoverySettings(BaseSettings):

@@ -12,6 +12,7 @@ from app.agents.kilocode.client import KilocodeClient
 from app.agents.kilocode.discovery import discover_models
 from app.agents.kilocode.runtime import KilocodeAgentRuntime
 from app.agents.registry import AgentModelDefinition, registry
+from app.agents.utils import extract_response_text
 from app.core.config import settings
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger
@@ -204,7 +205,7 @@ class KilocodeProvider(AgentProvider):
             )
 
             # Extract assistant response text from parts
-            return self._extract_response_text(response)
+            return extract_response_text(response)
 
         except ServiceUnavailableError:
             raise
@@ -281,30 +282,6 @@ class KilocodeProvider(AgentProvider):
         ]
 
         return result
-
-    @staticmethod
-    def _extract_response_text(response: dict) -> str:
-        """Extract assistant response text from the message response."""
-        parts = response.get("parts", [])
-        if not parts:
-            # Fallback: check for content in message info
-            info = response.get("info", {})
-            return info.get("content", "")
-
-        text_parts = []
-        for part in parts:
-            if not isinstance(part, dict):
-                continue
-            part_type = part.get("type", "")
-            if part_type == "text":
-                content = part.get("text", "")
-                if content:
-                    text_parts.append(content)
-            elif part_type in ("tool", "tool-use", "tool-result"):
-                # Skip tool parts
-                continue
-
-        return "\n".join(text_parts).strip()
 
 
 # Singleton instance

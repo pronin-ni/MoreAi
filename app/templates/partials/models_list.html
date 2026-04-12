@@ -96,10 +96,19 @@
                     {% if model.id == selected_model %}
                     <span class="badge badge-selected">Selected</span>
                     {% endif %}
+                    {% if not model.metadata.get('provider_available') %}
+                    <span class="badge badge-unavailable" title="{{ model.metadata.get('provider_error', 'Provider unavailable') }}">Provider Unavailable</span>
+                    {% elif model.metadata.get('provider_mode') == 'managed' %}
+                    <span class="badge badge-agent">Managed</span>
+                    {% elif model.metadata.get('provider_mode') == 'external' %}
+                    <span class="badge badge-api">External</span>
+                    {% endif %}
                     {% if not model.available %}
                     <span class="badge badge-unavailable">Unavailable</span>
                     {% elif not model.enabled %}
                     <span class="badge badge-disabled">Disabled</span>
+                    {% elif model.metadata.get('free') %}
+                    <span class="badge badge-free">Free</span>
                     {% endif %}
                 </label>
             </li>
