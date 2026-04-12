@@ -36,13 +36,16 @@ class ModelLifecycleEntry:
         self.disappearance_count: int = 0
         self.total_availability_time_s: float = 0.0
         self.discovery_source: str = "unknown"  # api_registry, agent_registry, etc.
+        self.last_provider: str = ""  # Which provider last reported this model
 
-    def mark_available(self, source: str = "unknown") -> None:
+    def mark_available(self, source: str = "unknown", provider_id: str = "") -> None:
         """Mark model as currently available (discovered or returned)."""
         was_missing = not self.is_currently_available
         self.is_currently_available = True
         self.last_seen_at = time.time()
         self.discovery_source = source
+        if provider_id:
+            self.last_provider = provider_id
 
         if was_missing:
             self.disappearance_count += 1
@@ -53,12 +56,16 @@ class ModelLifecycleEntry:
                 missing_duration_s=str(round(self.last_seen_at - self.last_missing_at, 1)),
             )
 
-    def mark_missing(self) -> None:
+    def mark_missing(self, provider_id: str = "") -> None:
         """Mark model as temporarily missing (disappeared from discovery)."""
+        # Only mark missing if this model was last seen from the same provider
+        # This prevents cross-provider false "missing" events
+        if provider_id and self.last_provider and self.last_provider != provider_id:
+            return
         if self.is_currently_available:
             self.last_missing_at = time.time()
             self.is_currently_available = False
-            logger.info(
+            logger.debug(
                 "model_temporarily_missing",
                 model=self.canonical_id,
             )
@@ -137,11 +144,11 @@ class ModelIntelligenceTracker:
             if model_id in self._entries:
                 entry = self._entries[model_id]
                 if not entry.is_currently_available:
-                    entry.mark_available(source)
+                    entry.mark_available(source, provider_id=provider_id)
                     returned_ids.add(model_id)
             else:
                 entry = ModelLifecycleEntry(model_id)
-                entry.mark_available(source)
+                entry.mark_available(source, provider_id=provider_id)
                 self._entries[model_id] = entry
                 logger.info(
                     "model_discovered",
@@ -150,12 +157,13 @@ class ModelIntelligenceTracker:
                     is_cold_start=str(entry.is_cold_start),
                 )
 
-        # Mark missing models
+        # Mark missing models — only for models from the same provider
         for model_id in list(self._entries.keys()):
             if model_id not in current_ids:
                 entry = self._entries[model_id]
-                if entry.is_currently_available:
-                    entry.mark_missing()
+                was_available = entry.is_currently_available
+                entry.mark_missing(provider_id=provider_id)
+                if was_available and not entry.is_currently_available:
                     missing_ids.add(model_id)
 
         result = {
