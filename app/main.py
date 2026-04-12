@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import app.agents.kilocode.provider  # noqa: F401
 import app.agents.opencode.provider  # noqa: F401
 import app.browser.providers  # noqa: F401
 from app.admin.config_manager import config_manager

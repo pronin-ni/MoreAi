@@ -41,6 +41,9 @@ class KilocodeProvider(AgentProvider):
             self._available = False
             self._error = "disabled_by_config"
             self._mode = "external"
+            # Register a fallback model so the provider is visible even when disabled
+            self._models = self._create_fallback_model()
+            registry.register(self, self._models)
             return
 
         # Determine mode
@@ -52,6 +55,9 @@ class KilocodeProvider(AgentProvider):
             logger.info("Kilocode provider is managed but autostart is disabled")
             self._available = False
             self._error = "managed_autostart_disabled"
+            # Register a fallback model so the provider is visible even when autostart is disabled
+            self._models = self._create_fallback_model()
+            registry.register(self, self._models)
         else:
             self._mode = "external"
             await self._initialize_external()
@@ -68,6 +74,9 @@ class KilocodeProvider(AgentProvider):
                 "Kilocode managed startup failed",
                 error=self._error,
             )
+            # Register a fallback model so the provider is visible in diagnostics even when startup fails
+            self._models = self._create_fallback_model()
+            registry.register(self, self._models)
             if settings.kilocode.required:
                 raise RuntimeError(
                     f"Kilocode provider is required but failed to start: {self._error}"
@@ -89,6 +98,9 @@ class KilocodeProvider(AgentProvider):
             )
             self._available = False
             self._error = f"post_start_healthcheck_failed: {exc}"
+            # Register a fallback model so the provider is visible in diagnostics even when healthcheck fails
+            self._models = self._create_fallback_model()
+            registry.register(self, self._models)
             if settings.kilocode.required:
                 raise RuntimeError(
                     f"Kilocode provider is required but healthcheck failed: {exc}"
@@ -107,11 +119,11 @@ class KilocodeProvider(AgentProvider):
                     "Kilocode model discovery failed",
                     error=str(exc),
                 )
-                self._models = []
+                self._models = self._create_fallback_model()
                 self._error = f"discovery_failed: {exc}"
         else:
             logger.info("Kilocode model discovery is disabled")
-            self._models = []
+            self._models = self._create_fallback_model()
 
         registry.register(self, self._models)
 
@@ -131,6 +143,9 @@ class KilocodeProvider(AgentProvider):
             )
             self._available = False
             self._error = f"healthcheck_failed: {exc}"
+            # Register a fallback model so the provider is visible in diagnostics even when healthcheck fails
+            self._models = self._create_fallback_model()
+            registry.register(self, self._models)
             return
 
         if settings.kilocode.discovery_enabled:
@@ -145,11 +160,11 @@ class KilocodeProvider(AgentProvider):
                     "Kilocode model discovery failed",
                     error=str(exc),
                 )
-                self._models = []
+                self._models = self._create_fallback_model()
                 self._error = f"discovery_failed: {exc}"
         else:
             logger.info("Kilocode model discovery is disabled")
-            self._models = []
+            self._models = self._create_fallback_model()
 
         registry.register(self, self._models)
 
@@ -282,6 +297,20 @@ class KilocodeProvider(AgentProvider):
         ]
 
         return result
+
+    def _create_fallback_model(self) -> list[AgentModelDefinition]:
+        """Create a fallback model for when initialization fails."""
+        return [
+            AgentModelDefinition(
+                id=f"agent/kilocode/kilocode/kilocode",
+                provider_id=self.provider_id,
+                transport="agent",
+                source_type="kilocode_server",
+                enabled=True,
+                available=False,
+                metadata={"error": self._error or "initialization_failed", "fallback": True},
+            )
+        ]
 
 
 # Singleton instance
