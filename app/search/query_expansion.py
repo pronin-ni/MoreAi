@@ -41,9 +41,9 @@ async def expand_query(query: str) -> list[str]:
     try:
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
 
-        # Create request for LLM
+        # Create request for LLM - use auto for intelligent selection
         request = ChatCompletionRequest(
-            model="fast",  # Use fast mode for quick response
+            model="auto",
             messages=[
                 ChatMessage(role="system", content="You generate search query variations."),
                 ChatMessage(role="user", content=prompt),

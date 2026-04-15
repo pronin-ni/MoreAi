@@ -156,47 +156,50 @@ def _build_search_default_prompt(
     search_content: dict,
     search_skipped: bool,
 ) -> str:
-    """Build default prompt for search stage."""
+    """Build default prompt for synthesize stage (Perplexity-style)."""
     if search_skipped:
-        return f"""Answer the following question. Use your knowledge.
+        return f"""Answer the question. Use your knowledge.
 
 Question: {original_request}
 
-Instructions:
-- Provide a helpful, accurate answer
-- If uncertain, state so
+IMPORTANT:
+- Provide the FINAL ANSWER only
+- No meta-analysis or evaluation text
+- No phrases like "I cannot evaluate" or "no answer"
 """
 
     if not search_results:
-        return f"""Answer the following question. No search results were found.
+        return f"""Answer the question. No web results found.
 
 Question: {original_request}
 
-Instructions:
-- Answer based on your knowledge
-- If you don't know, say so
+IMPORTANT:
+- Answer from your knowledge
+- Provide the FINAL ANSWER only
+- No meta-analysis
 """
 
-    # Build prompt with search results
+    # Build Perplexity-style prompt with numbered sources
     parts = [
-        "Answer the question using the sources below.",
+        "Answer using the sources below. cite inline like [1], [2].",
         "",
     ]
 
-    # Add sources with content
-    for i, r in enumerate(search_results[:3], start=1):
+    # Add sources with content (numbered [1], [2], etc.)
+    for i, r in enumerate(search_results[:5], start=1):
         url = r.get("url", "")
         title = r.get("title", "Untitled")
+
         parts.append(f"[{i}] {title}")
-        parts.append(f"    URL: {url}")
+        parts.append(f"    {url}")
 
         if url in search_content:
-            content = search_content[url][:800]
+            content = search_content[url][:1000]
             parts.append(f"    {content}")
         else:
             snippet = r.get("snippet", "")
             if snippet:
-                parts.append(f"    {snippet[:200]}")
+                parts.append(f"    {snippet[:300]}")
 
         parts.append("")
 
@@ -204,10 +207,11 @@ Instructions:
         [
             f"Question: {original_request}",
             "",
-            "Instructions:",
-            "- Cite sources like [1], [2]",
-            "- Be concise and accurate",
-            "- If information is insufficient, state so",
+            "IMPORTANT:",
+            "- Provide the FINAL ANSWER only",
+            "- Cite sources as [1], [2], etc.",
+            "- NO meta-analysis or evaluation text",
+            "- Include sources list at the end",
         ]
     )
 

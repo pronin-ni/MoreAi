@@ -165,6 +165,11 @@ class PipelineExecutor:
             # All stages completed successfully
             final_result = self._get_final_result(ctx, pipeline_def)
 
+            # Guard: check for meta-answer patterns, fallback to generate-only output
+            final_output = self._validate_final_output(ctx, pipeline_def, final_result)
+            if final_output != final_result.output:
+                final_result = type(final_result)(output=final_output, success=True)
+
             ctx.trace.status = "completed"
             ctx.trace.final_output = final_result.output
             ctx.trace.completed_at = time.monotonic()
@@ -445,8 +450,8 @@ class PipelineExecutor:
         trace.status = "running"
 
         # Build stage prompt and messages
-        # For search-answer pipeline, use special prompt builder
-        if ctx.trace.pipeline_id == "search-answer" and stage_def.stage_id == "search_generate":
+        # For search-answer pipeline synthesize stage, use special prompt builder
+        if ctx.trace.pipeline_id == "search-answer" and stage_def.stage_id == "synthesize":
             from app.pipeline.prompt_builder import build_search_stage_prompt
 
             search_results = ctx.metadata.get("search_results", [])
@@ -992,6 +997,62 @@ class PipelineExecutor:
             )
 
         return last_success
+
+    def _validate_final_output(
+        self, ctx: PipelineContext, pipeline_def: PipelineDefinition, final_result: StageResult
+    ) -> str:
+        """Validate final output - fallback if meta-answer detected."""
+        output = final_result.output
+        if not output:
+            return output
+
+        # Check for meta-answer patterns
+        lower_output = output.lower()
+        meta_patterns = [
+            "cannot evaluate",
+            "no answer",
+            "unable to determine",
+            "cannot provide an answer",
+            "i cannot determine",
+            "can't evaluate",
+            "no relevant information",
+            "not enough information",
+            "insufficient information",
+            "i don't have enough",
+            "without more information",
+        ]
+
+        is_meta = any(pattern in lower_output for pattern in meta_patterns)
+        if not is_meta:
+            return output
+
+        # For search-answer pipeline: if refine stage has meta output, fallback to synthesize
+        if pipeline_def.pipeline_id == "search-answer":
+            synthesize_result = ctx.stage_outputs.get("synthesize")
+            if synthesize_result and synthesize_result.success and synthesize_result.output:
+                logger.info(
+                    "pipeline_output_fallback",
+                    pipeline_id=pipeline_def.pipeline_id,
+                    reason="meta_answer_in_refine",
+                    fallback_stage="synthesize",
+                )
+                return synthesize_result.output
+
+        # Fallback to generate stage output if available
+        for stage_def in pipeline_def.stages:
+            if stage_def.role == StageRole.GENERATE:
+                gen_result = ctx.stage_outputs.get(stage_def.stage_id)
+                if gen_result and gen_result.success and gen_result.output:
+                    logger.info(
+                        "pipeline_output_fallback",
+                        pipeline_id=pipeline_def.pipeline_id,
+                        reason="meta_answer_detected",
+                        original_length=len(output),
+                        fallback_stage=stage_def.stage_id,
+                    )
+                    return gen_result.output
+
+        return output
 
     def _build_response(
         self,

@@ -334,22 +334,13 @@ EXPLORE_AND_ANSWER = PipelineDefinition(
 
 
 # ── search-answer ──
-# Web search pipeline: search → fetch content → generate answer with sources
+# Perplexity-style pipeline: search → synthesize → optional refine
+# - synthesize: produces final answer with inline citations
+# - refine: optional formatting improvement only (never adds new facts)
 
-
-_SEARCH_GENERATE_POLICY = {
+_SEARCH_SYNTHESIZE_POLICY = {
     "preferred_models": [],
-    "preferred_tags": ["fast", "stable"],
-    "avoid_tags": ["experimental"],
-    "min_availability": 0.4,
-    "max_latency_s": 30.0,
-    "fallback_mode": "next_best",
-    "max_fallback_attempts": 2,
-}
-
-_SEARCH_REVIEW_POLICY = {
-    "preferred_models": [],
-    "preferred_tags": ["review_strong", "reasoning_strong"],
+    "preferred_tags": ["stable", "reasoning_strong"],
     "avoid_tags": ["experimental"],
     "min_availability": 0.4,
     "max_latency_s": 60.0,
@@ -357,23 +348,32 @@ _SEARCH_REVIEW_POLICY = {
     "max_fallback_attempts": 2,
 }
 
+_SEARCH_REFINE_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["stable", "review_strong"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.5,
+    "max_latency_s": 45.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 1,
+}
 
 SEARCH_ANSWER = PipelineDefinition(
     pipeline_id="search-answer",
-    display_name="Search → Answer",
+    display_name="Search → Synthesize → Refine",
     description=(
-        "Web search pipeline: expand query, search (DuckDuckGo/SearXNG), "
-        "fetch page content, generate answer with citations."
+        "Perplexity-style: web search → synthesize answer with sources → "
+        "optional refine for formatting"
     ),
     enabled=True,
     max_total_time_ms=120_000,
     max_stage_retries=1,
     stages=[
-        # Stage 1: Generate with search context
+        # Stage 1: Synthesize - generates FINAL answer with sources
         PipelineStage(
-            stage_id="search_generate",
+            stage_id="synthesize",
             role=StageRole.GENERATE,
-            selection_policy=_SEARCH_GENERATE_POLICY,
+            selection_policy=_SEARCH_SYNTHESIZE_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=False,
@@ -384,23 +384,25 @@ SEARCH_ANSWER = PipelineDefinition(
             max_retries=1,
             prompt_template=None,
         ),
-        # Stage 2: Optional review/citation check
+        # Stage 2: Optional refine - formatting only, never use for correctness
         PipelineStage(
-            stage_id="review_sources",
-            role=StageRole.REVIEW,
-            selection_policy=_SEARCH_REVIEW_POLICY,
+            stage_id="refine",
+            role=StageRole.REFINE,
+            selection_policy=_SEARCH_REFINE_POLICY,
             input_mapping=InputMapping(
                 include_original_request=True,
                 include_previous_output=True,
                 custom_prompt_prefix=(
-                    "Review the answer for factual accuracy and citation quality.\n\n"
+                    "Improve formatting only. Keep all facts from the draft. "
+                    "Do NOT add new facts or change meaning.\n\n"
                     "--- Question ---\n{original_request}\n\n"
-                    "--- Generated Answer ---\n{previous_output}\n\n"
+                    "--- Draft Answer ---\n{previous_output}\n\n"
                     "Instructions:\n"
-                    "- Verify that claims are supported by the source material\n"
-                    "- Check that citations are properly formatted\n"
-                    "- If sources are missing or incorrect, provide specific corrections\n\n"
-                    "--- Review ---"
+                    "- Keep all factual information unchanged\n"
+                    "- Improve formatting and structure only\n"
+                    "- Keep citations in [N] format\n"
+                    "- Return FINAL answer only\n\n"
+                    "--- FINAL ANSWER ---"
                 ),
             ),
             output_mode=OutputMode.PLAIN_TEXT,

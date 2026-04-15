@@ -90,6 +90,68 @@ async def studio_page():
     )
 
 
+SEARCH_NEED_PROMPT = """Analyze the user query and determine if external web search is needed to provide accurate, up-to-date information.
+
+Consider web search is needed for:
+- Current events, news, latest information (after knowledge cutoff)
+- Specific people, companies, products, websites
+- Factual questions requiring verified sources
+- Recommendations for physical items, services, places
+- Technical documentation, API references, code examples from web
+- Anything that requires source citations
+
+Consider web search is NOT needed for:
+- General knowledge, concepts, explanations
+- Creative writing, analysis, opinions
+- Mathematical or logical problems
+- Code generation without web references
+- Conversations about previous messages
+
+User query: {query}
+
+Respond with EXACTLY one word: "yes" or "no" (lowercase, no punctuation)."""
+
+
+async def _should_use_search_llm(query: str) -> bool:
+    """Decide whether query needs web search using LLM."""
+    from app.services.chat_proxy_service import service as chat_proxy_service
+
+    if not query or len(query.strip()) < 3:
+        return False
+
+    try:
+        prompt = SEARCH_NEED_PROMPT.format(query=query)
+        search_request = ChatCompletionRequest(
+            model="auto",
+            messages=[
+                ChatMessage(role="system", content="You determine if web search is needed."),
+                ChatMessage(role="user", content=prompt),
+            ],
+            max_tokens=10,
+            temperature=0.0,
+        )
+
+        response = await chat_proxy_service.process_completion(
+            search_request, request_id="search_detection"
+        )
+
+        answer = response.choices[0].message.content.strip().lower()
+        needs_search = answer == "yes"
+
+        logger.debug(
+            "search_detection_result",
+            query=query[:50],
+            decision=needs_search,
+            llm_answer=answer,
+        )
+
+        return needs_search
+
+    except Exception as e:
+        logger.warning("search_detection_failed", query=query[:50], error=str(e))
+        return False
+
+
 @router.post("/studio/chat")
 async def studio_chat(
     request: Request,
@@ -139,6 +201,15 @@ async def studio_chat(
     policy = get_mode_policy(mode)
     is_pipeline = policy.get("is_pipeline", False)
     pipeline_id = policy.get("pipeline_id", "")
+
+    # Auto-detect search need for balanced mode
+    if mode == "balanced" and not advanced_type:
+        needs_search = await _should_use_search_llm(message)
+        if needs_search:
+            policy = get_mode_policy("web_search")
+            pipeline_id = policy.get("pipeline_id", "search-answer")
+            is_pipeline = True
+            logger.info("auto_search_enabled", query=message[:50])
 
     # Advanced mode: user selected specific model (explicit override)
     if advanced_type == "custom_model" and advanced_model:

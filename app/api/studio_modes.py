@@ -70,9 +70,9 @@ STUDIO_MODE_POLICIES: dict[str, dict] = {
         "is_pipeline": True,
         "pipeline_id": "draft-verify-finalize",
     },
-    # Search: web search pipeline
-    "search": {
-        "label": "Поиск",
+    # Web Search: explicit web search pipeline (not auto-detected)
+    "web_search": {
+        "label": "Web Search",
         "description": "Поиск в интернете с источниками",
         "is_pipeline": True,
         "pipeline_id": "search-answer",
