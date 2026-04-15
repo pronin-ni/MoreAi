@@ -28,7 +28,7 @@
         quality: { label: 'Качество', isPipeline: true },
         review: { label: 'Рецензия', isPipeline: true },
         deep: { label: 'Глубокий', isPipeline: true },
-        search: { label: 'Поиск', isPipeline: true },
+        web_search: { label: 'Web Search', isPipeline: true },
         explore: { label: 'Исследовать', isPipeline: true },
     };
 
@@ -62,7 +62,7 @@
             { text: 'Верификация…', subtext: 'Перекрёстная проверка фактов и логики', duration_ms: 6000 },
             { text: 'Финализация результата…', subtext: 'Этот режим может занять больше времени для лучшего результата', duration_ms: 5000 },
         ],
-        search: [
+        web_search: [
             { text: 'Поиск в интернете…', subtext: 'DuckDuckGo / SearXNG', duration_ms: 3000 },
             { text: 'Загрузка страниц…', subtext: 'Извлечение содержимого источников', duration_ms: 4000 },
             { text: 'Генерация ответа…', subtext: 'Создание ответа с цитатами источников', duration_ms: 5000 },
