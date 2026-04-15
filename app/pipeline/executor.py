@@ -1302,3 +1302,10 @@ class PipelineExecutor:
         pipeline_count=str(len(pipeline_registry.list_all())),
         enabled_count=str(len(pipeline_registry.list_enabled())),
     )
+
+
+def initialize_pipelines() -> None:
+    """Initialize pipeline subsystem - called from main.py lifespan."""
+    # Pipelines are already initialized at module load time
+    # This function exists for backward compatibility and explicit initialization
+    logger.info("pipelines_subsystem_ready")
