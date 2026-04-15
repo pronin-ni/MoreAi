@@ -332,6 +332,85 @@ EXPLORE_AND_ANSWER = PipelineDefinition(
     ],
 )
 
+
+# ── search-answer ──
+# Web search pipeline: search → fetch content → generate answer with sources
+
+
+_SEARCH_GENERATE_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["fast", "stable"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.4,
+    "max_latency_s": 30.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
+
+_SEARCH_REVIEW_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": ["review_strong", "reasoning_strong"],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.4,
+    "max_latency_s": 60.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 2,
+}
+
+
+SEARCH_ANSWER = PipelineDefinition(
+    pipeline_id="search-answer",
+    display_name="Search → Answer",
+    description=(
+        "Web search pipeline: expand query, search (DuckDuckGo/SearXNG), "
+        "fetch page content, generate answer with citations."
+    ),
+    enabled=True,
+    max_total_time_ms=120_000,
+    max_stage_retries=1,
+    stages=[
+        # Stage 1: Generate with search context
+        PipelineStage(
+            stage_id="search_generate",
+            role=StageRole.GENERATE,
+            selection_policy=_SEARCH_GENERATE_POLICY,
+            input_mapping=InputMapping(
+                include_original_request=True,
+                include_previous_output=False,
+                custom_prompt_prefix=None,
+            ),
+            output_mode=OutputMode.PLAIN_TEXT,
+            failure_policy=FailurePolicy.FAIL_ALL,
+            max_retries=1,
+            prompt_template=None,
+        ),
+        # Stage 2: Optional review/citation check
+        PipelineStage(
+            stage_id="review_sources",
+            role=StageRole.REVIEW,
+            selection_policy=_SEARCH_REVIEW_POLICY,
+            input_mapping=InputMapping(
+                include_original_request=True,
+                include_previous_output=True,
+                custom_prompt_prefix=(
+                    "Review the answer for factual accuracy and citation quality.\n\n"
+                    "--- Question ---\n{original_request}\n\n"
+                    "--- Generated Answer ---\n{previous_output}\n\n"
+                    "Instructions:\n"
+                    "- Verify that claims are supported by the source material\n"
+                    "- Check that citations are properly formatted\n"
+                    "- If sources are missing or incorrect, provide specific corrections\n\n"
+                    "--- Review ---"
+                ),
+            ),
+            output_mode=OutputMode.PLAIN_TEXT,
+            failure_policy=FailurePolicy.SKIP,
+            max_retries=1,
+        ),
+    ],
+)
+
+
 # ── Registry bootstrap ──
 
 BUILTIN_PIPELINES: list[PipelineDefinition] = [
@@ -339,6 +418,7 @@ BUILTIN_PIPELINES: list[PipelineDefinition] = [
     GENERATE_CRITIQUE_REGENERATE,
     DRAFT_VERIFY_FINALIZE,
     EXPLORE_AND_ANSWER,
+    SEARCH_ANSWER,
 ]
 
 

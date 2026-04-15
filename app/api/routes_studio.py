@@ -61,26 +61,34 @@ async def studio_page():
             p_def = pipeline_registry.get(mode_config.get("pipeline_id", ""))
             available = p_def is not None and p_def.enabled if p_def else False
 
-        modes.append({
-            "key": mode_key,
-            "label": mode_config["label"],
-            "description": mode_config["description"],
-            "available": available,
-            "is_pipeline": is_pipeline,
-        })
+        modes.append(
+            {
+                "key": mode_key,
+                "label": mode_config["label"],
+                "description": mode_config["description"],
+                "available": available,
+                "is_pipeline": is_pipeline,
+                "magic": mode_config.get("magic", ""),
+            }
+        )
 
     # Get grouped models for advanced mode
     browser_models, api_models, agent_models = model_registry_service.group_models()
 
-    return HTMLResponse(content=_render_template(
-        "studio.html",
-        modes=modes,
-        default_mode="balanced",
-        browser_models=browser_models,
-        api_models=api_models,
-        agent_models=agent_models,
-        STUDIO_MODES={k: {"label": v["label"], "isPipeline": v["is_pipeline"]} for k, v in STUDIO_MODE_POLICIES.items()},
-    ))
+    return HTMLResponse(
+        content=_render_template(
+            "studio.html",
+            modes=modes,
+            default_mode="balanced",
+            browser_models=browser_models,
+            api_models=api_models,
+            agent_models=agent_models,
+            STUDIO_MODES={
+                k: {"label": v["label"], "isPipeline": v["is_pipeline"]}
+                for k, v in STUDIO_MODE_POLICIES.items()
+            },
+        )
+    )
 
 
 @router.post("/studio/chat")
@@ -136,17 +144,25 @@ async def studio_chat(
     # Advanced mode: user selected specific model (explicit override)
     if advanced_type == "custom_model" and advanced_model:
         return await _execute_studio_single_model(
-            conversation, advanced_model, mode, request,
+            conversation,
+            advanced_model,
+            mode,
+            request,
         )
 
     if is_pipeline:
         return await _execute_studio_pipeline(
-            conversation, pipeline_id, mode, request,
+            conversation,
+            pipeline_id,
+            mode,
+            request,
         )
 
     # Single-model mode: use intelligence layer for selection
     return await _execute_studio_intelligent(
-        conversation, mode, request,
+        conversation,
+        mode,
+        request,
     )
 
 
@@ -244,6 +260,7 @@ async def _execute_studio_intelligent(
 
         try:
             from app.services.chat_proxy_service import service as proxy_service
+
             response = await proxy_service.process_completion(chat_request, request_id)
             used_model = candidate.model_id
             used_provider = candidate.provider_id
@@ -280,13 +297,15 @@ async def _execute_studio_intelligent(
                     error=error_msg[:200],
                 )
 
-            fallback_records.append({
-                "failed_model": candidate.model_id,
-                "failed_provider": candidate.provider_id,
-                "score": round(candidate.final_score, 3),
-                "reason": failure_reason,
-                "is_terminal": is_terminal,
-            })
+            fallback_records.append(
+                {
+                    "failed_model": candidate.model_id,
+                    "failed_provider": candidate.provider_id,
+                    "score": round(candidate.final_score, 3),
+                    "reason": failure_reason,
+                    "is_terminal": is_terminal,
+                }
+            )
 
             if attempt_idx + 1 <= max_attempts:
                 fallback_count += 1
@@ -298,9 +317,17 @@ async def _execute_studio_intelligent(
 
     # ── Build execution summary ──
     execution_summary = _build_intelligent_execution_summary(
-        mode, sel_policy_dict, viable[0] if viable else None,
-        used_model, used_provider, fallback_count, fallback_records,
-        elapsed_ms, response, conversation, request_id,
+        mode,
+        sel_policy_dict,
+        viable[0] if viable else None,
+        used_model,
+        used_provider,
+        fallback_count,
+        fallback_records,
+        elapsed_ms,
+        response,
+        conversation,
+        request_id,
     )
 
     if response:
@@ -343,6 +370,7 @@ async def studio_execution_detail(execution_id: str):
     if summary is None:
         try:
             from app.pipeline.observability.persistent_store import get_persistent_store
+
             persistent = get_persistent_store()
             data = persistent.get(execution_id)
             if data is None:
@@ -446,7 +474,9 @@ async def _execute_studio_pipeline(
             error_message="Conversation is empty. Please send a message.",
         )
 
-    chat_request = ChatCompletionRequest(model=f"pipeline/{pipeline_id}", messages=messages, stream=False)
+    chat_request = ChatCompletionRequest(
+        model=f"pipeline/{pipeline_id}", messages=messages, stream=False
+    )
     request_id = f"studio-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
 
@@ -479,7 +509,9 @@ async def _execute_studio_pipeline(
         conversation.append({"role": "assistant", "content": content, "timestamp": time.time()})
 
         # Extract execution_id from response.id (format: "pipeline-{trace_id}")
-        exec_id = response.id.replace("pipeline-", "", 1) if response.id.startswith("pipeline-") else ""
+        exec_id = (
+            response.id.replace("pipeline-", "", 1) if response.id.startswith("pipeline-") else ""
+        )
 
         return _render_studio_response(
             messages=_build_render_messages(conversation),
@@ -560,6 +592,7 @@ def _build_intelligent_execution_summary(
         # Try to get quality score
         try:
             from app.pipeline.observability.scoring_history import scoring_history_store
+
             for m in [used_model]:
                 hist = scoring_history_store.get_history(model_id=m, limit=1)
                 if hist:
@@ -635,9 +668,11 @@ def _is_terminal_studio_failure(exc: Exception) -> bool:
 
     # Timeout and rate limits are potentially retryable
     return not (
-        "timeout" in error_msg or "gateway_timeout" in error_type
+        "timeout" in error_msg
+        or "gateway_timeout" in error_type
         or "timed out" in error_msg
-        or "rate" in error_msg or "429" in error_msg
+        or "rate" in error_msg
+        or "429" in error_msg
     )
 
 
@@ -682,13 +717,15 @@ def _build_render_messages(conversation: list[dict]) -> list[dict]:
         else:
             html_content = bleach.clean(content, tags=[], attributes={})
 
-        result.append({
-            "role": role,
-            "content": content,
-            "html_content": html_content,
-            "timestamp": ts,
-            "is_error": False,
-        })
+        result.append(
+            {
+                "role": role,
+                "content": content,
+                "html_content": html_content,
+                "timestamp": ts,
+                "is_error": False,
+            }
+        )
 
     return result
 
@@ -702,7 +739,7 @@ def _safe_parse_json(text: str) -> list[dict]:
         if isinstance(data, list):
             return data
         return []
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return []
 
 
@@ -808,7 +845,9 @@ def _compute_verdict(stages: list[dict], total_fallbacks: int, data: dict) -> di
     all_completed = all(s["status"] == "completed" for s in stages)
     has_fallbacks = total_fallbacks > 0
 
-    quality_scores = [s["quality_score"] for s in stages if s.get("quality_score") and s["quality_score"] > 0]
+    quality_scores = [
+        s["quality_score"] for s in stages if s.get("quality_score") and s["quality_score"] > 0
+    ]
     avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
 
     if not all_completed:
@@ -854,11 +893,13 @@ def _build_user_facing_details(data: dict) -> dict:
 
         fallbacks = []
         for fb in fallback_chain:
-            fallbacks.append({
-                "from_model": fb.get("failed_model", fb.get("model", "unknown")),
-                "to_model": "",
-                "reason": _classify_fallback_reason(fb.get("reason", "")),
-            })
+            fallbacks.append(
+                {
+                    "from_model": fb.get("failed_model", fb.get("model", "unknown")),
+                    "to_model": "",
+                    "reason": _classify_fallback_reason(fb.get("reason", "")),
+                }
+            )
 
         quality_score = s.get("quality_score")
         quality_label = ""
@@ -870,23 +911,35 @@ def _build_user_facing_details(data: dict) -> dict:
             else:
                 quality_label = "Low confidence"
 
-        user_stages.append({
-            "stage_id": s.get("stage_id", ""),
-            "role": role,
-            "role_label": _role_label(role),
-            "model": selection.get("selected_model", s.get("selected_model", "")) if selection else s.get("selected_model", ""),
-            "provider": selection.get("selected_provider", s.get("selected_provider", "")) if selection else s.get("selected_provider", ""),
-            "transport": selection.get("selected_transport", s.get("selected_transport", "")) if selection else s.get("selected_transport", ""),
-            "duration_ms": s.get("duration_ms", 0),
-            "status": status,
-            "status_label": "Completed" if status == "completed" else "Skipped" if status == "skipped" else "Failed",
-            "fallback_count": fb_count,
-            "fallbacks": fallbacks,
-            "explanation": explanation,
-            "quality_score": quality_score,
-            "quality_label": quality_label,
-            "retry_count": s.get("retry_count", 0),
-        })
+        user_stages.append(
+            {
+                "stage_id": s.get("stage_id", ""),
+                "role": role,
+                "role_label": _role_label(role),
+                "model": selection.get("selected_model", s.get("selected_model", ""))
+                if selection
+                else s.get("selected_model", ""),
+                "provider": selection.get("selected_provider", s.get("selected_provider", ""))
+                if selection
+                else s.get("selected_provider", ""),
+                "transport": selection.get("selected_transport", s.get("selected_transport", ""))
+                if selection
+                else s.get("selected_transport", ""),
+                "duration_ms": s.get("duration_ms", 0),
+                "status": status,
+                "status_label": "Completed"
+                if status == "completed"
+                else "Skipped"
+                if status == "skipped"
+                else "Failed",
+                "fallback_count": fb_count,
+                "fallbacks": fallbacks,
+                "explanation": explanation,
+                "quality_score": quality_score,
+                "quality_label": quality_label,
+                "retry_count": s.get("retry_count", 0),
+            }
+        )
 
     for _i, stage in enumerate(user_stages):
         for j, fb in enumerate(stage["fallbacks"]):
@@ -913,4 +966,3 @@ def _build_user_facing_details(data: dict) -> dict:
         "cross_stage": cross_stage,
         "verdict": verdict,
     }
-

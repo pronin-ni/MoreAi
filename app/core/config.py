@@ -258,6 +258,64 @@ class PipelineSettings(BaseSettings):
     )
 
 
+class SearchSettings(BaseSettings):
+    """Web search configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="SEARCH_", extra="ignore")
+
+    enabled: bool = Field(default=True, description="Enable web search functionality")
+    providers: str = Field(
+        default="duckduckgo,searxng",
+        description="Comma-separated list of search providers in priority order",
+    )
+    searxng_base_url: str = Field(
+        default="http://localhost:8080",
+        description="SearXNG instance base URL",
+    )
+    timeout: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Search provider timeout in seconds",
+    )
+    max_results: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Max search results per query",
+    )
+    max_queries: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Max number of queries to generate (original + variations)",
+    )
+    fetch_timeout: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Content fetch timeout in seconds",
+    )
+    fetch_max_pages: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Max number of pages to fetch content from",
+    )
+    cache_ttl_seconds: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description="Search result cache TTL in seconds",
+    )
+    page_cache_ttl_seconds: int = Field(
+        default=3600,
+        ge=300,
+        le=86400,
+        description="Page content cache TTL in seconds",
+    )
+
+
 class TransportFeatureFlags(BaseSettings):
     """System-level feature flags for transport types.
 
@@ -372,6 +430,7 @@ class Settings(BaseSettings):
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
     model_discovery: ModelDiscoverySettings = Field(default_factory=ModelDiscoverySettings)
     transport_feature_flags: TransportFeatureFlags = Field(default_factory=TransportFeatureFlags)
+    search: SearchSettings = Field(default_factory=SearchSettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -405,6 +464,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "model_discovery", ModelDiscoverySettings())
         if "transport_feature_flags" not in kwargs:
             object.__setattr__(self, "transport_feature_flags", TransportFeatureFlags())
+        if "search" not in kwargs:
+            object.__setattr__(self, "search", SearchSettings())
 
 
 settings = Settings()

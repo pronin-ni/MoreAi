@@ -1425,3 +1425,52 @@ def _resolve_transport(canonical_id: str) -> str:
     if canonical_id.startswith("api/"):
         return "api"
     return "api"
+
+
+@router.get("/admin/search/status")
+async def get_search_status():
+    """Get search system status.
+
+    Returns:
+        - Configuration (providers, settings)
+        - Provider health status
+        - Last errors from providers
+        - Cache statistics
+    """
+    from app.core.config import settings
+    from app.search.cache import page_cache, search_cache
+    from app.search.router import search_router
+
+    # Get provider health
+    health = await search_router.health_check_all()
+
+    # Get provider errors
+    errors = search_router.get_provider_errors()
+
+    # Get cache stats
+    search_cache_stats = search_cache.stats
+    page_cache_stats = page_cache.stats
+
+    return {
+        "enabled": settings.search.enabled,
+        "config": {
+            "providers": settings.search.providers.split(","),
+            "searxng_base_url": settings.search.searxng_base_url,
+            "timeout": settings.search.timeout,
+            "max_results": settings.search.max_results,
+            "max_queries": settings.search.max_queries,
+            "fetch_max_pages": settings.search.fetch_max_pages,
+        },
+        "providers": {
+            "configured": [p.provider_id for p in search_router.providers],
+            "health": health,
+            "errors": {
+                provider: {"error_type": e.error_type, "message": e.message}
+                for provider, e in errors.items()
+            },
+        },
+        "cache": {
+            "search": search_cache_stats,
+            "page": page_cache_stats,
+        },
+    }

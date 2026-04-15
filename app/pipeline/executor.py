@@ -104,6 +104,10 @@ class PipelineExecutor:
             trace_id=ctx.trace.trace_id,
         )
 
+        # Pre-execute hook for special pipelines (e.g., search)
+        if pipeline_def.pipeline_id == "search-answer":
+            await _search_pipeline_prepare(ctx, request, request_id)
+
         try:
             # Execute stages sequentially
             for stage_def in pipeline_def.stages:
@@ -119,7 +123,11 @@ class PipelineExecutor:
                     )
 
                 result = await self._execute_stage(
-                    ctx, stage_def, request, remaining_ms, request_id,
+                    ctx,
+                    stage_def,
+                    request,
+                    remaining_ms,
+                    request_id,
                 )
 
                 if not result.success:
@@ -160,9 +168,7 @@ class PipelineExecutor:
             ctx.trace.status = "completed"
             ctx.trace.final_output = final_result.output
             ctx.trace.completed_at = time.monotonic()
-            ctx.trace.total_duration_ms = (
-                ctx.trace.completed_at - ctx.trace.started_at
-            ) * 1000
+            ctx.trace.total_duration_ms = (ctx.trace.completed_at - ctx.trace.started_at) * 1000
 
             logger.info(
                 "pipeline_completed",
@@ -187,15 +193,13 @@ class PipelineExecutor:
             # Build OpenAI-compatible response
             return self._build_response(ctx, final_result, pipeline_def)
 
-        except (BadRequestError, GatewayTimeoutError, InternalError):
+        except BadRequestError, GatewayTimeoutError, InternalError:
             raise
         except Exception as exc:
             ctx.trace.status = "failed"
             ctx.trace.error_message = str(exc)
             ctx.trace.completed_at = time.monotonic()
-            ctx.trace.total_duration_ms = (
-                ctx.trace.completed_at - ctx.trace.started_at
-            ) * 1000
+            ctx.trace.total_duration_ms = (ctx.trace.completed_at - ctx.trace.started_at) * 1000
 
             logger.exception(
                 "pipeline_unexpected_error",
@@ -260,12 +264,24 @@ class PipelineExecutor:
             try:
                 if is_intelligent:
                     result = await self._run_stage_with_candidate_selection(
-                        ctx, stage_def, request, stage_timeout_ms, trace, request_id,
-                        excluded_ids, failure_penalties, fallback_chain,
+                        ctx,
+                        stage_def,
+                        request,
+                        stage_timeout_ms,
+                        trace,
+                        request_id,
+                        excluded_ids,
+                        failure_penalties,
+                        fallback_chain,
                     )
                 else:
                     result = await self._run_stage(
-                        ctx, stage_def, request, stage_timeout_ms, trace, request_id,
+                        ctx,
+                        stage_def,
+                        request,
+                        stage_timeout_ms,
+                        trace,
+                        request_id,
                     )
 
                 trace.status = "completed"
@@ -282,8 +298,8 @@ class PipelineExecutor:
                     duration_ms=attempt_duration_ms,
                     result="success",
                     failure_reason="",
-                    restart_occurred=getattr(result, 'restart_occurred', False),
-                    restart_reason=getattr(result, 'restart_reason', ''),
+                    restart_occurred=getattr(result, "restart_occurred", False),
+                    restart_reason=getattr(result, "restart_reason", ""),
                 )
                 trace.attempts.append(attempt_trace)
                 if attempt == 0 and not result.restart_occurred:
@@ -309,7 +325,8 @@ class PipelineExecutor:
                     log_fields["restart_reason"] = result.restart_reason
                 if result.successful_attempt_duration_ms > 0 and result.attempts:
                     log_fields["successful_attempt_duration_ms"] = str(
-                        round(result.successful_attempt_duration_ms, 1))
+                        round(result.successful_attempt_duration_ms, 1)
+                    )
                     log_fields["retry_count"] = str(len(result.attempts) - 1)
 
                 logger.info("stage_completed", **log_fields)
@@ -428,23 +445,47 @@ class PipelineExecutor:
         trace.status = "running"
 
         # Build stage prompt and messages
-        stage_prompt = build_stage_prompt(
-            stage_id=stage_def.stage_id,
-            role=stage_def.role,
-            original_request=ctx.original_user_input,
-            input_mapping=stage_def.input_mapping,
-            prompt_template=stage_def.prompt_template,
-            context=ctx,
-        )
+        # For search-answer pipeline, use special prompt builder
+        if ctx.trace.pipeline_id == "search-answer" and stage_def.stage_id == "search_generate":
+            from app.pipeline.prompt_builder import build_search_stage_prompt
+
+            search_results = ctx.metadata.get("search_results", [])
+            search_content = ctx.metadata.get("search_content", {})
+            search_skipped = ctx.metadata.get("search_skipped", False)
+            stage_prompt = build_search_stage_prompt(
+                stage_id=stage_def.stage_id,
+                original_request=ctx.original_user_input,
+                search_results=search_results,
+                search_content=search_content,
+                search_skipped=search_skipped,
+            )
+        else:
+            stage_prompt = build_stage_prompt(
+                stage_id=stage_def.stage_id,
+                role=stage_def.role,
+                original_request=ctx.original_user_input,
+                input_mapping=stage_def.input_mapping,
+                prompt_template=stage_def.prompt_template,
+                context=ctx,
+            )
 
         stage_messages = self._build_stage_messages(
-            ctx, stage_def, stage_prompt, request,
+            ctx,
+            stage_def,
+            stage_prompt,
+            request,
         )
 
         target_model = stage_def.target_model
         return await self._execute_stage_model(
-            target_model, ctx, stage_def, request, stage_messages,
-            stage_start, trace, request_id,
+            target_model,
+            ctx,
+            stage_def,
+            request,
+            stage_messages,
+            stage_start,
+            trace,
+            request_id,
         )
 
     async def _run_stage_with_candidate_selection(
@@ -523,9 +564,15 @@ class PipelineExecutor:
             # Re-rank candidates with current failure penalties
             if failure_penalties:
                 re_ranked = model_selector._rank_candidates(
-                    [{"model_id": c.model_id, "provider_id": c.provider_id,
-                      "transport": c.transport, "canonical_id": c.canonical_id}
-                     for c in candidates],
+                    [
+                        {
+                            "model_id": c.model_id,
+                            "provider_id": c.provider_id,
+                            "transport": c.transport,
+                            "canonical_id": c.canonical_id,
+                        }
+                        for c in candidates
+                    ],
                     stage_def.role.value,
                     policy,
                     prev_model,
@@ -620,20 +667,33 @@ class PipelineExecutor:
             )
 
             stage_messages = self._build_stage_messages(
-                ctx, stage_def, stage_prompt, request,
+                ctx,
+                stage_def,
+                stage_prompt,
+                request,
             )
 
             # Execute with the selected candidate
             try:
                 result = await self._execute_stage_model(
-                    target_candidate.model_id, ctx, stage_def, request, stage_messages,
-                    stage_start, trace, request_id,
+                    target_candidate.model_id,
+                    ctx,
+                    stage_def,
+                    request,
+                    stage_messages,
+                    stage_start,
+                    trace,
+                    request_id,
                 )
 
                 # Success
                 if fallback_chain:
-                    ctx.metadata[f"selection_trace:{stage_def.stage_id}"]["fallback_chain"] = fallback_chain
-                    ctx.metadata[f"selection_trace:{stage_def.stage_id}"]["fallback_count"] = len(fallback_chain)
+                    ctx.metadata[f"selection_trace:{stage_def.stage_id}"]["fallback_chain"] = (
+                        fallback_chain
+                    )
+                    ctx.metadata[f"selection_trace:{stage_def.stage_id}"]["fallback_count"] = len(
+                        fallback_chain
+                    )
 
                 return result
 
@@ -645,11 +705,14 @@ class PipelineExecutor:
                 if is_terminal:
                     # Exclude this candidate — won't be tried again
                     excluded_ids.add(target_candidate.model_id)
-                    failure_penalties[target_candidate.model_id] = self._compute_failure_penalty(failure_reason)
+                    failure_penalties[target_candidate.model_id] = self._compute_failure_penalty(
+                        failure_reason
+                    )
 
                     # Record in global penalty cache (optional)
                     try:
                         from app.pipeline.observability.penalty_cache import global_penalty_cache
+
                         global_penalty_cache.record_failure(
                             target_candidate.model_id,
                             reason=failure_reason,
@@ -658,13 +721,15 @@ class PipelineExecutor:
                     except Exception:
                         pass
 
-                    fallback_chain.append({
-                        "failed_model": target_candidate.model_id,
-                        "failed_provider": target_candidate.provider_id,
-                        "reason": failure_reason,
-                        "penalty": failure_penalties[target_candidate.model_id],
-                        "error_message": str(exc),
-                    })
+                    fallback_chain.append(
+                        {
+                            "failed_model": target_candidate.model_id,
+                            "failed_provider": target_candidate.provider_id,
+                            "reason": failure_reason,
+                            "penalty": failure_penalties[target_candidate.model_id],
+                            "error_message": str(exc),
+                        }
+                    )
 
                     logger.warning(
                         "stage_candidate_failed_trying_next",
@@ -703,7 +768,11 @@ class PipelineExecutor:
             return "circuit_breaker"
         if "unavailable" in error_msg or "service_unavailable" in error_type:
             return "service_unavailable"
-        if "not found" in error_msg or "unknown model" in error_msg or "unknown_model" in error_type:
+        if (
+            "not found" in error_msg
+            or "unknown model" in error_msg
+            or "unknown_model" in error_type
+        ):
             return "model_not_found"
         if "internal" in error_type or "internal_error" in error_msg:
             return "provider_internal_error"
@@ -777,8 +846,7 @@ class PipelineExecutor:
 
         # Timeout is potentially retryable (not terminal by default)
         return not (
-            "timeout" in error_msg or "gateway_timeout" in error_type
-            or "timed out" in error_msg
+            "timeout" in error_msg or "gateway_timeout" in error_type or "timed out" in error_msg
         )
 
     def _classify_exception(self, exc: Exception) -> str:
@@ -790,7 +858,12 @@ class PipelineExecutor:
             return "timeout"
         if "circuit" in error_msg or "circuit" in error_type:
             return "circuit_breaker"
-        if "no available" in error_msg or "no viable" in error_msg or "unavailable" in error_msg or "service_unavailable" in error_type:
+        if (
+            "no available" in error_msg
+            or "no viable" in error_msg
+            or "unavailable" in error_msg
+            or "service_unavailable" in error_type
+        ):
             return "service_unavailable"
         if "not found" in error_msg or "unknown model" in error_msg:
             return "model_not_found"
@@ -841,21 +914,23 @@ class PipelineExecutor:
         restart_occurred = False
         restart_reason = ""
 
-        if hasattr(response, '_browser_attempts') and response._browser_attempts:
+        if hasattr(response, "_browser_attempts") and response._browser_attempts:
             for a in response._browser_attempts:
-                attempts.append(AttemptTrace(
-                    attempt_number=a.get("attempt_number", 0),
-                    started_at=a.get("started_at", 0),
-                    ended_at=a.get("ended_at", 0),
-                    duration_ms=a.get("duration_ms", 0),
-                    result=a.get("result", "unknown"),
-                    failure_reason=a.get("failure_reason", ""),
-                    restart_occurred=a.get("restart_occurred", False),
-                    restart_reason=a.get("restart_reason", ""),
-                ))
+                attempts.append(
+                    AttemptTrace(
+                        attempt_number=a.get("attempt_number", 0),
+                        started_at=a.get("started_at", 0),
+                        ended_at=a.get("ended_at", 0),
+                        duration_ms=a.get("duration_ms", 0),
+                        result=a.get("result", "unknown"),
+                        failure_reason=a.get("failure_reason", ""),
+                        restart_occurred=a.get("restart_occurred", False),
+                        restart_reason=a.get("restart_reason", ""),
+                    )
+                )
             successful_attempt_duration_ms = attempts[-1].duration_ms if attempts else duration_ms
-            restart_occurred = getattr(response, '_browser_restart_occurred', False)
-            restart_reason = getattr(response, '_browser_restart_reason', '')
+            restart_occurred = getattr(response, "_browser_restart_occurred", False)
+            restart_reason = getattr(response, "_browser_restart_reason", "")
 
         result = StageResult(
             stage_id=stage_def.stage_id,
@@ -899,7 +974,9 @@ class PipelineExecutor:
         # Later stages: create a new user message from the built prompt
         return [ChatMessage(role="user", content=stage_prompt)]
 
-    def _get_final_result(self, ctx: PipelineContext, pipeline_def: PipelineDefinition) -> StageResult:
+    def _get_final_result(
+        self, ctx: PipelineContext, pipeline_def: PipelineDefinition
+    ) -> StageResult:
         """Get the final stage result — last successful stage output."""
         # Walk stages in order, return the last successful one
         last_success: StageResult | None = None
@@ -1107,7 +1184,9 @@ class PipelineExecutor:
 
         # Build and store execution summary
         summary = observability_recorder.record_from_context(
-            ctx, pipeline_def, request_id,
+            ctx,
+            pipeline_def,
+            request_id,
         )
 
         # Record partial success metric
@@ -1149,8 +1228,74 @@ class PipelineExecutor:
 pipeline_executor = PipelineExecutor()
 
 
-def initialize_pipelines() -> None:
+async def _search_pipeline_prepare(
+    ctx: PipelineContext, request: ChatCompletionRequest, request_id: str
+) -> None:
+    """Execute search before the search-answer pipeline stages.
+
+    This runs BEFORE any pipeline stages. It performs the web search
+    and stores results in the pipeline context metadata.
+    """
+    from app.core.config import settings
+    from app.search.service import search_service
+
+    if not settings.search.enabled:
+        logger.warning("search_disabled_falling_back_to_llm")
+        ctx.metadata["search_skipped"] = True
+        ctx.metadata["search_error"] = "Search is disabled"
+        return
+
+    # Extract user query
+    user_query = ctx.original_user_input
+    if not user_query:
+        ctx.metadata["search_skipped"] = True
+        return
+
+    logger.info("search_pipeline_starting", request_id=request_id, query=user_query[:100])
+
+    try:
+        # Perform search with content fetching
+        search_context = await search_service.search(
+            query=user_query,
+            fetch_content=True,
+        )
+
+        # Store in context metadata for use in stages
+        ctx.metadata["search_context"] = {
+            "original_query": search_context.original_query,
+            "expanded_queries": search_context.expanded_queries,
+            "result_count": len(search_context.search_results),
+            "content_fetched": len(search_context.fetched_contents),
+            "sources": list(search_context.fetched_contents.keys()),
+            "error": search_context.error,
+        }
+
+        # Store fetched content for prompt building
+        ctx.metadata["search_content"] = search_context.fetched_contents
+        ctx.metadata["search_results"] = [
+            {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
+            for r in search_context.search_results
+        ]
+
+        logger.info(
+            "search_pipeline_complete",
+            request_id=request_id,
+            query=user_query[:50],
+            results=len(search_context.search_results),
+            content_pages=len(search_context.fetched_contents),
+            error=search_context.error,
+        )
+
+    except Exception as e:
+        logger.error("search_pipeline_failed", request_id=request_id, error=str(e))
+        # Don't fail the pipeline - just skip search
+        ctx.metadata["search_skipped"] = True
+        ctx.metadata["search_error"] = str(e)
+
+
+class PipelineExecutor:
     """Bootstrap the pipeline registry with built-in definitions."""
+
     register_builtin_pipelines(pipeline_registry)
     logger.info(
         "pipelines_initialized",

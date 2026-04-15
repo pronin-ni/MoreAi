@@ -304,6 +304,15 @@
     line-height: 1.2;
 }
 
+.studio-mode-magic {
+    display: block;
+    font-size: 0.55rem;
+    color: var(--accent, #a855f7);
+    margin-top: 3px;
+    font-style: italic;
+    opacity: 0.8;
+}
+
 /* ── Advanced ── */
 
 .studio-advanced {

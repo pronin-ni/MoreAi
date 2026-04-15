@@ -65,6 +65,14 @@ def _render_template(template: str, stage_id: str, context: PipelineContext) -> 
     # All outputs concatenated if needed
     all_outputs = context.get_all_outputs_text()
 
+    # Search-related variables for search-answer pipeline
+    search_results = context.metadata.get("search_results", [])
+    search_content = context.metadata.get("search_content", {})
+    context.metadata.get("search_skipped", False)
+
+    # Format search results for prompt
+    search_sources_formatted = _format_search_sources(search_results, search_content)
+
     replacements: dict[str, str] = {
         "original_request": original_request,
         "previous_output": previous_output,
@@ -75,6 +83,9 @@ def _render_template(template: str, stage_id: str, context: PipelineContext) -> 
         "initial_output": initial_output,
         "stage_summaries": summaries,
         "all_outputs": all_outputs,
+        # Search variables
+        "search_sources": search_sources_formatted,
+        "search_results": _format_search_results_list(search_results),
     }
 
     result = template
@@ -82,3 +93,122 @@ def _render_template(template: str, stage_id: str, context: PipelineContext) -> 
         result = result.replace("{" + key + "}", value)
 
     return result
+
+
+def build_search_stage_prompt(
+    stage_id: str,
+    original_request: str,
+    search_results: list[dict],
+    search_content: dict[str, str],
+    search_skipped: bool,
+) -> str:
+    """Build prompt for search stage with search results.
+
+    This is called from the executor when building the stage prompt
+    for the search-answer pipeline.
+    """
+    # Special handling: if it's a search stage, build default search prompt
+    return _build_search_default_prompt(
+        original_request, search_results, search_content, search_skipped
+    )
+
+
+def _format_search_sources(search_results: list[dict], search_content: dict[str, str]) -> str:
+    """Format search results with content for prompt."""
+    if not search_results:
+        return "No search results available."
+
+    parts = ["Sources:"]
+    for i, r in enumerate(search_results[:5], start=1):
+        title = r.get("title", "Untitled")
+        url = r.get("url", "")
+        snippet = r.get("snippet", "")
+
+        parts.append(f"[{i}] {title}")
+        parts.append(f"    URL: {url}")
+        if snippet:
+            truncated = snippet[:200] + "..." if len(snippet) > 200 else snippet
+            parts.append(f"    {truncated}")
+
+        # Add fetched content if available
+        if url in search_content:
+            content = search_content[url][:1000]
+            parts.append(f"    Content: {content}...")
+
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def _format_search_results_list(search_results: list[dict]) -> str:
+    """Format search results as a simple list."""
+    if not search_results:
+        return "No results"
+
+    return "\n".join(
+        [f"- {r.get('title', 'Untitled')}: {r.get('url', '')}" for r in search_results[:5]]
+    )
+
+
+def _build_search_default_prompt(
+    original_request: str,
+    search_results: list,
+    search_content: dict,
+    search_skipped: bool,
+) -> str:
+    """Build default prompt for search stage."""
+    if search_skipped:
+        return f"""Answer the following question. Use your knowledge.
+
+Question: {original_request}
+
+Instructions:
+- Provide a helpful, accurate answer
+- If uncertain, state so
+"""
+
+    if not search_results:
+        return f"""Answer the following question. No search results were found.
+
+Question: {original_request}
+
+Instructions:
+- Answer based on your knowledge
+- If you don't know, say so
+"""
+
+    # Build prompt with search results
+    parts = [
+        "Answer the question using the sources below.",
+        "",
+    ]
+
+    # Add sources with content
+    for i, r in enumerate(search_results[:3], start=1):
+        url = r.get("url", "")
+        title = r.get("title", "Untitled")
+        parts.append(f"[{i}] {title}")
+        parts.append(f"    URL: {url}")
+
+        if url in search_content:
+            content = search_content[url][:800]
+            parts.append(f"    {content}")
+        else:
+            snippet = r.get("snippet", "")
+            if snippet:
+                parts.append(f"    {snippet[:200]}")
+
+        parts.append("")
+
+    parts.extend(
+        [
+            f"Question: {original_request}",
+            "",
+            "Instructions:",
+            "- Cite sources like [1], [2]",
+            "- Be concise and accurate",
+            "- If information is insufficient, state so",
+        ]
+    )
+
+    return "\n".join(parts)
