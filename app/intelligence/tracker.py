@@ -17,6 +17,8 @@ Provides diagnostics:
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
+from typing import Any
 
 from app.core.logging import get_logger
 from app.registry.unified import unified_registry
@@ -37,6 +39,11 @@ class ModelLifecycleEntry:
         self.total_availability_time_s: float = 0.0
         self.discovery_source: str = "unknown"  # api_registry, agent_registry, etc.
         self.last_provider: str = ""  # Which provider last reported this model
+
+        # Exploration tracking for bandit approach
+        self.exploration_attempts: int = 0
+        self.successful_explorations: int = 0
+        self.is_cold_start: bool = True
 
     def mark_available(self, source: str = "unknown", provider_id: str = "") -> None:
         """Mark model as currently available (discovered or returned)."""
@@ -70,6 +77,58 @@ class ModelLifecycleEntry:
                 model=self.canonical_id,
             )
 
+    def record_exploration_attempt(self, success: bool) -> None:
+        """Record an exploration attempt for this model."""
+        self.exploration_attempts += 1
+        if success:
+            self.successful_explorations += 1
+            logger.debug(
+                "exploration_success",
+                model=self.canonical_id,
+                attempts=self.exploration_attempts,
+                successes=self.successful_explorations,
+            )
+        else:
+            logger.debug(
+                "exploration_failed",
+                model=self.canonical_id,
+                attempts=self.exploration_attempts,
+            )
+        # Update cold-start status based on config
+        self._update_cold_start_status()
+
+    def _update_cold_start_status(self) -> None:
+        """Update cold-start status based on exploration results."""
+        from app.core.config import settings
+
+        threshold = settings.pipeline.cold_start_threshold
+        min_successes = settings.pipeline.exploration_min_successes
+
+        # Exit cold-start if we have enough samples AND enough successes
+        if (
+            self.exploration_attempts >= threshold
+            and self.successful_explorations >= min_successes
+            and self.is_cold_start
+        ):
+            self.is_cold_start = False
+            logger.info(
+                "cold_start_exited",
+                model=self.canonical_id,
+                attempts=self.exploration_attempts,
+                successes=self.successful_explorations,
+            )
+
+    def get_is_cold_start(self, sample_count: int = 0) -> bool:
+        """Check if model is in cold-start state based on sample count."""
+        if not self.is_cold_start:
+            return False
+
+        from app.core.config import settings
+
+        threshold = settings.pipeline.cold_start_threshold
+        # Cold-start if we have fewer samples than threshold
+        return sample_count < threshold
+
     def to_dict(self) -> dict:
         return {
             "canonical_id": self.canonical_id,
@@ -81,12 +140,9 @@ class ModelLifecycleEntry:
             "discovery_source": self.discovery_source,
             "is_cold_start": self.is_cold_start,
             "lifetime_s": round(self.last_seen_at - self.first_discovered_at, 1),
+            "exploration_attempts": self.exploration_attempts,
+            "successful_explorations": self.successful_explorations,
         }
-
-    @property
-    def is_cold_start(self) -> bool:
-        """Model has zero or near-zero runtime history."""
-        return self.disappearance_count == 0 and (time.time() - self.first_discovered_at) < 300  # 5 min
 
 
 class ModelIntelligenceTracker:
@@ -108,7 +164,7 @@ class ModelIntelligenceTracker:
 
     def __init__(self) -> None:
         self._entries: dict[str, ModelLifecycleEntry] = {}
-        self._callbacks: list[callable] = []
+        self._callbacks: list[Callable[[str, list[str], list[str]], Any]] = []
 
     def register_callback(self, callback) -> None:
         """Register a callback to be called when models are discovered.
@@ -215,15 +271,17 @@ class ModelIntelligenceTracker:
                 provider_id=provider_id,
             )
 
-            result.append({
-                **entry.to_dict(),
-                "sample_count": stats.request_count,
-                "success_rate": round(stats.success_rate, 3),
-                "availability_score": round(stats.availability_score, 3),
-                "stability_score": round(stats.stability_score, 3),
-                "tags": sorted(tags),
-                "intelligence_status": "cold_start" if entry.is_cold_start else "established",
-            })
+            result.append(
+                {
+                    **entry.to_dict(),
+                    "sample_count": stats.request_count,
+                    "success_rate": round(stats.success_rate, 3),
+                    "availability_score": round(stats.availability_score, 3),
+                    "stability_score": round(stats.stability_score, 3),
+                    "tags": sorted(tags),
+                    "intelligence_status": "cold_start" if entry.is_cold_start else "established",
+                }
+            )
 
         # Also include models in registry that aren't yet tracked
         all_models = unified_registry.list_models()
@@ -237,18 +295,24 @@ class ModelIntelligenceTracker:
 
                 transport = m.get("transport", "api")
                 provider_id = m.get("provider_id", "")
-                stats = stats_aggregator.get_model_stats(canonical_id, provider_id=provider_id, transport=transport)
+                stats = stats_aggregator.get_model_stats(
+                    canonical_id, provider_id=provider_id, transport=transport
+                )
                 tags = capability_registry.get_tags(canonical_id, provider_id)
 
-                result.append({
-                    **entry.to_dict(),
-                    "sample_count": stats.request_count,
-                    "success_rate": round(stats.success_rate, 3),
-                    "availability_score": round(stats.availability_score, 3),
-                    "stability_score": round(stats.stability_score, 3),
-                    "tags": sorted(tags),
-                    "intelligence_status": "cold_start" if entry.is_cold_start else "established",
-                })
+                result.append(
+                    {
+                        **entry.to_dict(),
+                        "sample_count": stats.request_count,
+                        "success_rate": round(stats.success_rate, 3),
+                        "availability_score": round(stats.availability_score, 3),
+                        "stability_score": round(stats.stability_score, 3),
+                        "tags": sorted(tags),
+                        "intelligence_status": "cold_start"
+                        if entry.is_cold_start
+                        else "established",
+                    }
+                )
 
         return result
 

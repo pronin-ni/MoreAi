@@ -1,5 +1,6 @@
 import time
 import uuid
+
 from app.schemas.openai import (
     ChatCompletionResponse,
     Choice,

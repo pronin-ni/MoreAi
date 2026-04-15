@@ -6,22 +6,31 @@ Implements:
 - Ranking with weighted scoring
 - Stage-aware selection with policy constraints
 - Bounded fallback with full traceability
+- Multi-armed bandit exploration vs exploitation
+- Objective-based selection (fast/balanced/quality/deep)
 """
 
 from __future__ import annotations
 
+import random
+
 from app.admin.config_manager import config_manager
+from app.core.config import settings
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger
+from app.core.transport_filters import is_transport_enabled
 from app.intelligence.stats import stats_aggregator
 from app.intelligence.suitability import (
     _batch_get_last_activity_with_source_by_role,
     suitability_scorer,
 )
 from app.intelligence.tags import capability_registry
+from app.intelligence.tracker import model_intelligence_tracker
 from app.intelligence.types import (
+    SELECTION_MODE_WEIGHTS,
     CandidateRanking,
     FallbackMode,
+    SelectionMode,
     SelectionPolicy,
     SelectionTrace,
     StageRole,
@@ -30,7 +39,7 @@ from app.registry.unified import unified_registry
 
 logger = get_logger(__name__)
 
-# ── Ranking weights ──
+# ── Ranking weights (base weights, will be adjusted by selection mode) ──
 # Composite score formula
 
 RANKING_WEIGHTS = {
@@ -49,6 +58,12 @@ class ModelSelector:
     Collects candidates, ranks them, and selects the best one
     based on availability, latency, stability, stage suitability,
     capability tags, and admin overrides.
+
+    Uses multi-armed bandit approach:
+    - EXPLORATION_RATE (default 20%): select from cold-start/novel models
+    - EXPLOITATION (80%): select from best-ranked established models
+
+    Also applies objective-based weights (fast/balanced/quality/deep).
     """
 
     def select_for_stage(
@@ -74,17 +89,32 @@ class ModelSelector:
         role_str = stage_role.value if isinstance(stage_role, StageRole) else stage_role
         excluded_ids = excluded_ids or set()
 
+        # Determine if we should explore (bandit) or exploit
+        is_exploration = self._should_explore(policy)
+        is_exploration_mode = policy.selection_mode == SelectionMode.EXPLORE
+
         trace = SelectionTrace(
             stage_id=stage_id,
             stage_role=role_str,
             previous_stage_model=previous_stage_model,
             selection_policy=policy.model_dump(),
+            is_exploration=is_exploration or is_exploration_mode,
         )
 
-        # Collect all candidates
-        candidates = self._collect_candidates(policy)
+        # Collect candidates
+        if is_exploration or is_exploration_mode:
+            candidates = self._get_exploration_candidates(policy)
+            logger.info(
+                "exploration_selection",
+                stage_id=stage_id,
+                role=role_str,
+                candidate_count=len(candidates),
+                mode=str(policy.selection_mode),
+            )
+        else:
+            candidates = self._collect_candidates(policy)
 
-        # Rank candidates
+        # Rank candidates with objective-based weights
         ranked = self._rank_candidates(candidates, role_str, policy, previous_stage_model)
 
         trace.all_candidates = ranked
@@ -127,6 +157,12 @@ class ModelSelector:
         trace.selected_transport = best.transport
         trace.selected_candidate = best  # Store full ranking object
 
+        # Update selection reason with objective info
+        if is_exploration or is_exploration_mode:
+            trace.selection_reason = "exploration_cold_start"
+        else:
+            trace.selection_reason = self._get_selection_reason(best, policy)
+
         logger.info(
             "model_selected",
             stage_id=stage_id,
@@ -134,9 +170,112 @@ class ModelSelector:
             model=best.model_id,
             provider=best.provider_id,
             score=str(round(best.final_score, 3)),
+            is_exploration=str(trace.is_exploration),
         )
 
         return trace
+
+    def _should_explore(self, policy: SelectionPolicy) -> bool:
+        """Decide using multi-armed bandit: explore or exploit."""
+        # Force exploration mode from policy
+        if policy.selection_mode == SelectionMode.EXPLORE:
+            return True
+
+        # Bandit exploration: random chance based on EXPLORATION_RATE
+        rate = settings.pipeline.exploration_rate
+        return random.random() < rate
+
+    def _get_exploration_candidates(
+        self,
+        policy: SelectionPolicy,
+    ) -> list[dict[str, str]]:
+        """Get candidates for exploration: cold-start / novel models."""
+        candidates: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        # Get all models from registry
+        for m in unified_registry.list_models():
+            canonical_id = m["id"]
+            if canonical_id in seen:
+                continue
+
+            # Check transport filter
+            model_transport = m.get("transport", "browser")
+            if not is_transport_enabled(model_transport):
+                continue
+
+            # Check policy filters
+            if policy.allowed_transports and model_transport not in policy.allowed_transports:
+                continue
+
+            if canonical_id in policy.excluded_models:
+                continue
+
+            # Check if this is a cold-start model
+            lifecycle = model_intelligence_tracker.get_entry(canonical_id)
+            sample_count = 0
+
+            # Get sample count from stats
+            try:
+                stats = stats_aggregator.get_model_stats(
+                    canonical_id,
+                    provider_id=m.get("provider_id", ""),
+                    transport=model_transport,
+                )
+                sample_count = stats.request_count
+            except Exception:
+                pass
+
+            is_cold = lifecycle is None or lifecycle.get_is_cold_start(sample_count)
+            if not is_cold:
+                # In exploration mode, we want cold-start models
+                # But if there are none, fall back to all models sorted by "novelty"
+                pass
+
+            seen.add(canonical_id)
+            candidates.append(
+                {
+                    "model_id": canonical_id,
+                    "provider_id": m.get("provider_id", ""),
+                    "transport": model_transport,
+                    "canonical_id": canonical_id,
+                }
+            )
+
+        # Sort: cold-start first, then by cheapness/availability
+        cold_start_first = []
+        regular = []
+        for c in candidates:
+            # Check if cold-start
+            lifecycle = model_intelligence_tracker.get_entry(c["model_id"])
+            if lifecycle and lifecycle.get_is_cold_start(0):
+                cold_start_first.append(c)
+            else:
+                regular.append(c)
+
+        cold_start_first.sort(key=lambda c: c["model_id"])
+        regular.sort(key=lambda c: c["model_id"])
+
+        return cold_start_first + regular
+
+    def _get_selection_reason(self, candidate: CandidateRanking, policy: SelectionPolicy) -> str:
+        """Generate human-readable reason for selection based on objective."""
+        mode = policy.selection_mode
+
+        if mode == SelectionMode.FAST:
+            return "low_latency"
+        elif mode == SelectionMode.BALANCED:
+            return "balanced_score"
+        elif mode == SelectionMode.QUALITY:
+            return "high_quality"
+        elif mode == SelectionMode.DEEP:
+            return "deep_reasoning"
+        else:
+            return "highest_ranked"
+
+    def _get_mode_weights(self, mode: SelectionMode) -> dict[str, float]:
+        """Get objective-based weights for a selection mode."""
+        return SELECTION_MODE_WEIGHTS.get(mode, SELECTION_MODE_WEIGHTS[SelectionMode.BALANCED])
 
     def fallback(
         self,
@@ -192,12 +331,14 @@ class ModelSelector:
 
         # Record fallback
         selection_trace.fallback_count += 1
-        selection_trace.fallback_chain.append({
-            "failed_model": failed_model,
-            "failed_provider": selection_trace.selected_provider,
-            "reason": failed_reason,
-            "fallback_to": next_candidate.model_id,
-        })
+        selection_trace.fallback_chain.append(
+            {
+                "failed_model": failed_model,
+                "failed_provider": selection_trace.selected_provider,
+                "reason": failed_reason,
+                "fallback_to": next_candidate.model_id,
+            }
+        )
 
         next_candidate.selected_reason = f"fallback_after_{failed_model}"
         next_candidate.is_fallback = True
@@ -240,7 +381,17 @@ class ModelSelector:
             if canonical_id in seen:
                 continue
 
-            # Apply transport filter
+            # Apply transport filter: skip if transport is disabled globally
+            model_transport = m.get("transport", "browser")
+            if not is_transport_enabled(model_transport):
+                logger.debug(
+                    "Skipping model due to disabled transport",
+                    model_id=canonical_id,
+                    transport=model_transport,
+                )
+                continue
+
+            # Apply transport filter: check against policy allowed_transports
             if policy.allowed_transports:
                 resolved = self._resolve_model(canonical_id)
                 if resolved and resolved["transport"] not in policy.allowed_transports:
@@ -251,12 +402,14 @@ class ModelSelector:
                 continue
 
             seen.add(canonical_id)
-            candidates.append({
-                "model_id": canonical_id,
-                "provider_id": m.get("provider_id", ""),
-                "transport": m.get("transport", "browser"),
-                "canonical_id": canonical_id,
-            })
+            candidates.append(
+                {
+                    "model_id": canonical_id,
+                    "provider_id": m.get("provider_id", ""),
+                    "transport": model_transport,
+                    "canonical_id": canonical_id,
+                }
+            )
 
         # Sort: preferred models first
         if policy.preferred_models:
@@ -341,7 +494,11 @@ class ModelSelector:
             model_penalties = failure_penalties.get(model_id)
             staleness_data = staleness_map.get((model_id, role))
             breakdown = suitability_scorer.compute_breakdown(
-                model_id, provider_id, transport, role, model_penalties,
+                model_id,
+                provider_id,
+                transport,
+                role,
+                model_penalties,
                 staleness_data=staleness_data,
             )
 
@@ -366,8 +523,13 @@ class ModelSelector:
 
             # Check exclusions
             exclusion_reason = self._check_exclusions(
-                model_id, provider_id, transport, policy,
-                stats, tags, previous_stage_model,
+                model_id,
+                provider_id,
+                transport,
+                policy,
+                stats,
+                tags,
+                previous_stage_model,
             )
 
             if exclusion_reason:
@@ -376,8 +538,12 @@ class ModelSelector:
                 rankings.append(ranking)
                 continue
 
-            # Compute final score with full breakdown
-            ranking.final_score = (
+            # Apply objective-based weights from selection mode
+            mode_weights = self._get_mode_weights(policy.selection_mode)
+
+            # Compute final score with full breakdown and objective weights
+            # Base composite: availability + latency + stability + suitability + tags + admin
+            base_score = (
                 weights["availability"] * ranking.availability_score
                 + weights["latency"] * ranking.latency_score
                 + weights["stability"] * ranking.stability_score
@@ -385,6 +551,24 @@ class ModelSelector:
                 + weights["tag_bonus"] * ranking.tag_bonus_score
                 + weights["admin_bonus"] * ranking.admin_bonus_score
             )
+
+            # Apply objective-based adjustment (latency/success/quality weights)
+            objective_score = (
+                mode_weights["latency"] * ranking.latency_score
+                + mode_weights["success_rate"] * ranking.availability_score
+                + mode_weights["quality"] * ranking.stage_suitability_score
+            )
+
+            # Combine: 70% base score + 30% objective-adjusted score
+            ranking.final_score = base_score * 0.7 + objective_score * 0.3
+
+            # For EXPLORE mode: add novelty bonus for cold-start models
+            if policy.selection_mode == SelectionMode.EXPLORE:
+                novelty_bonus = mode_weights.get("novelty", 0.0)
+                # Check if this model is cold-start
+                lifecycle = model_intelligence_tracker.get_entry(model_id)
+                if lifecycle and lifecycle.get_is_cold_start(stats.request_count):
+                    ranking.final_score += novelty_bonus * 0.5
 
             # Clamp final score
             ranking.final_score = min(1.0, max(0.0, ranking.final_score))
@@ -461,7 +645,9 @@ class ModelSelector:
         """
         # Check availability threshold
         if stats.availability_score < policy.min_availability:
-            return f"availability_too_low ({stats.availability_score:.2f} < {policy.min_availability})"
+            return (
+                f"availability_too_low ({stats.availability_score:.2f} < {policy.min_availability})"
+            )
 
         # Check latency threshold
         if stats.p50_latency_s > policy.max_latency_s and stats.p50_latency_s > 0:
@@ -473,7 +659,11 @@ class ModelSelector:
                 return f"avoided_tag ({avoid_tag})"
 
         # Check same model as previous stage
-        if policy.avoid_same_model_as_previous and previous_stage_model and model_id == previous_stage_model:
+        if (
+            policy.avoid_same_model_as_previous
+            and previous_stage_model
+            and model_id == previous_stage_model
+        ):
             return f"same_as_previous ({previous_stage_model})"
 
         # Check circuit breaker

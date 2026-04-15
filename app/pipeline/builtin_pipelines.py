@@ -289,12 +289,56 @@ DRAFT_VERIFY_FINALIZE = PipelineDefinition(
     ],
 )
 
+
+# ── explore-and-answer ──
+# Exploration pipeline: try cold-start models first, fallback to normal selection
+# Uses bandit approach to balance exploration (try new models) vs exploitation (use best models)
+
+
+_EXPLORE_POLICY = {
+    "preferred_models": [],
+    "preferred_tags": [],
+    "avoid_tags": ["experimental"],
+    "min_availability": 0.3,
+    "max_latency_s": 60.0,
+    "fallback_mode": "next_best",
+    "max_fallback_attempts": 3,
+    "selection_mode": "explore",
+}
+
+
+EXPLORE_AND_ANSWER = PipelineDefinition(
+    pipeline_id="explore-and-answer",
+    display_name="Explore → Answer",
+    description=(
+        "Single-stage exploration pipeline that tries cold-start/novel models first. "
+        "Uses multi-armed bandit approach: 20% exploration (try new models), "
+        "80% exploitation (use best-ranked models). Falls back to normal selection "
+        "if all exploration candidates fail."
+    ),
+    enabled=True,
+    max_total_time_ms=120_000,
+    max_stage_retries=1,
+    stages=[
+        PipelineStage(
+            stage_id="explore_and_answer",
+            role=StageRole.GENERATE,
+            selection_policy=_EXPLORE_POLICY,
+            output_mode=OutputMode.PLAIN_TEXT,
+            failure_policy=FailurePolicy.FAIL_ALL,
+            max_retries=1,
+            prompt_template=None,
+        ),
+    ],
+)
+
 # ── Registry bootstrap ──
 
 BUILTIN_PIPELINES: list[PipelineDefinition] = [
     GENERATE_REVIEW_REFINE,
     GENERATE_CRITIQUE_REGENERATE,
     DRAFT_VERIFY_FINALIZE,
+    EXPLORE_AND_ANSWER,
 ]
 
 

@@ -73,6 +73,9 @@ class KilocodeProvider(AgentProvider):
             logger.error(
                 "Kilocode managed startup failed",
                 error=self._error,
+                mode="managed",
+                command=settings.kilocode.command,
+                port=settings.kilocode.port,
             )
             # Register a fallback model so the provider is visible in diagnostics even when startup fails
             self._models = self._create_fallback_model()
@@ -82,6 +85,12 @@ class KilocodeProvider(AgentProvider):
                     f"Kilocode provider is required but failed to start: {self._error}"
                 )
             return
+
+        logger.info(
+            "Kilocode managed server started",
+            mode="managed",
+            port=settings.kilocode.port,
+        )
 
         # Now run healthcheck + discovery via HTTP client
         try:
@@ -302,7 +311,7 @@ class KilocodeProvider(AgentProvider):
         """Create a fallback model for when initialization fails."""
         return [
             AgentModelDefinition(
-                id=f"agent/kilocode/kilocode/kilocode",
+                id="agent/kilocode/kilocode/kilocode",
                 provider_id=self.provider_id,
                 transport="agent",
                 source_type="kilocode_server",

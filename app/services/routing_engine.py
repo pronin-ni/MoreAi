@@ -21,7 +21,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.errors import BadRequestError
 from app.core.logging import get_logger
+from app.core.transport_filters import is_transport_enabled
 
 logger = get_logger(__name__)
 
@@ -167,7 +169,6 @@ class RoutingEngine:
 
     def _resolve_base_model(self, requested_model: str, trace: list[str]) -> dict | None:
         """Resolve the base model from the unified registry."""
-        from app.core.errors import BadRequestError
         from app.registry.unified import unified_registry
 
         try:
@@ -203,55 +204,64 @@ class RoutingEngine:
         base_canonical_id = (base_model or {}).get("canonical_id", "")
 
         # 1. Browser candidates
-        for m in browser_registry.list_models():
-            m_id = m["id"]
-            ov = overrides.get(m_id)
-            enabled = ov.enabled if ov and ov.enabled is not None else m.get("enabled", True)
-            visibility = ov.visibility if ov and ov.visibility else "public"
-            # Match by exact ID or provider_id
-            if m_id == base_canonical_id or m["provider_id"] == base_provider_id:
-                candidates.append(CandidateProvider(
-                    provider_id=m["provider_id"],
-                    transport="browser",
-                    canonical_model_id=m_id,
-                    enabled=enabled,
-                    available=m.get("available", True),
-                    visibility=visibility,
-                ))
+        if is_transport_enabled("browser"):
+            for m in browser_registry.list_models():
+                m_id = m["id"]
+                ov = overrides.get(m_id)
+                enabled = ov.enabled if ov and ov.enabled is not None else m.get("enabled", True)
+                visibility = ov.visibility if ov and ov.visibility else "public"
+                # Match by exact ID or provider_id
+                if m_id == base_canonical_id or m["provider_id"] == base_provider_id:
+                    candidates.append(CandidateProvider(
+                        provider_id=m["provider_id"],
+                        transport="browser",
+                        canonical_model_id=m_id,
+                        enabled=enabled,
+                        available=m.get("available", True),
+                        visibility=visibility,
+                    ))
+        else:
+            trace.append("Browser transport disabled — skipping browser candidates")
 
         # 2. API candidates
-        for m in api_registry.list_models():
-            m_id = m["id"]
-            ov = overrides.get(m_id)
-            enabled = ov.enabled if ov and ov.enabled is not None else m.get("enabled", True)
-            visibility = ov.visibility if ov and ov.visibility else "public"
-            # Match by exact ID or provider_id
-            if m_id == base_canonical_id or m["provider_id"] == base_provider_id:
-                candidates.append(CandidateProvider(
-                    provider_id=m["provider_id"],
-                    transport="api",
-                    canonical_model_id=m_id,
-                    enabled=enabled,
-                    available=m.get("available", True),
-                    visibility=visibility,
-                ))
+        if is_transport_enabled("api"):
+            for m in api_registry.list_models():
+                m_id = m["id"]
+                ov = overrides.get(m_id)
+                enabled = ov.enabled if ov and ov.enabled is not None else m.get("enabled", True)
+                visibility = ov.visibility if ov and ov.visibility else "public"
+                # Match by exact ID or provider_id
+                if m_id == base_canonical_id or m["provider_id"] == base_provider_id:
+                    candidates.append(CandidateProvider(
+                        provider_id=m["provider_id"],
+                        transport="api",
+                        canonical_model_id=m_id,
+                        enabled=enabled,
+                        available=m.get("available", True),
+                        visibility=visibility,
+                    ))
+        else:
+            trace.append("API transport disabled — skipping API candidates")
 
         # 3. Agent candidates
-        for m in agent_registry.list_models():
-            m_id = m["id"]
-            ov = overrides.get(m_id)
-            enabled = ov.enabled if ov and ov.enabled is not None else m.get("enabled", True)
-            visibility = ov.visibility if ov and ov.visibility else "public"
-            # Match by exact ID or provider_id
-            if m_id == base_canonical_id or m["provider_id"] == base_provider_id:
-                candidates.append(CandidateProvider(
-                    provider_id=m["provider_id"],
-                    transport="agent",
-                    canonical_model_id=m_id,
-                    enabled=enabled,
-                    available=m.get("available", True),
-                    visibility=visibility,
-                ))
+        if is_transport_enabled("agent"):
+            for m in agent_registry.list_models():
+                m_id = m["id"]
+                ov = overrides.get(m_id)
+                enabled = ov.enabled if ov and ov.enabled is not None else m.get("enabled", True)
+                visibility = ov.visibility if ov and ov.visibility else "public"
+                # Match by exact ID or provider_id
+                if m_id == base_canonical_id or m["provider_id"] == base_provider_id:
+                    candidates.append(CandidateProvider(
+                        provider_id=m["provider_id"],
+                        transport="agent",
+                        canonical_model_id=m_id,
+                        enabled=enabled,
+                        available=m.get("available", True),
+                        visibility=visibility,
+                    ))
+        else:
+            trace.append("Agent transport disabled — skipping agent candidates")
 
         trace.append(f"Collected {len(candidates)} candidates across all transports")
 

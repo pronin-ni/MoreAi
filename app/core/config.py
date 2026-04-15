@@ -1,4 +1,3 @@
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -79,15 +78,27 @@ class ReconSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RECON_", extra="ignore")
 
     enabled: bool = Field(default=True, description="Enable auto-recon recovery")
-    max_time_ms: float = Field(default=3000.0, ge=500, le=10000, description="Max time budget for recon recovery")
+    max_time_ms: float = Field(
+        default=3000.0, ge=500, le=10000, description="Max time budget for recon recovery"
+    )
     max_dom_scans: int = Field(default=1, ge=0, le=3, description="Max HealingEngine DOM scans")
     max_page_reloads: int = Field(default=1, ge=0, le=2, description="Max soft page reloads")
-    max_replay_attempts: int = Field(default=1, ge=0, le=3, description="Max action replay attempts")
-    candidate_limit: int = Field(default=10, ge=1, le=50, description="Max candidates per role scan")
+    max_replay_attempts: int = Field(
+        default=1, ge=0, le=3, description="Max action replay attempts"
+    )
+    candidate_limit: int = Field(
+        default=10, ge=1, le=50, description="Max candidates per role scan"
+    )
     allow_soft_reload: bool = Field(default=True, description="Allow soft page reload during recon")
-    allow_new_chat_recovery: bool = Field(default=True, description="Allow start_new_chat as recovery action")
-    abort_on_login_wall: bool = Field(default=True, description="Abort recon immediately on login wall")
-    abort_on_modal_blockers: bool = Field(default=True, description="Abort recon if modal/dialog overlay detected")
+    allow_new_chat_recovery: bool = Field(
+        default=True, description="Allow start_new_chat as recovery action"
+    )
+    abort_on_login_wall: bool = Field(
+        default=True, description="Abort recon immediately on login wall"
+    )
+    abort_on_modal_blockers: bool = Field(
+        default=True, description="Abort recon if modal/dialog overlay detected"
+    )
 
 
 class OpenCodeSettings(BaseSettings):
@@ -113,12 +124,24 @@ class OpenCodeSettings(BaseSettings):
     )
     command: str = Field(default="opencode", description="Command to run for OpenCode server")
     port: int = Field(default=4096, ge=1, le=65535, description="Port for OpenCode server")
-    startup_timeout_seconds: int = Field(default=30, ge=5, description="Max seconds to wait for server to become healthy")
-    healthcheck_interval_seconds: int = Field(default=1, ge=1, description="Poll interval for readiness healthcheck")
-    graceful_shutdown_seconds: int = Field(default=10, ge=1, description="Grace period for SIGTERM before SIGKILL")
-    working_dir: str | None = Field(default=None, description="Working directory for the subprocess")
-    extra_env: dict[str, str] = Field(default_factory=dict, description="Additional environment variables for the subprocess")
-    required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
+    startup_timeout_seconds: int = Field(
+        default=30, ge=5, description="Max seconds to wait for server to become healthy"
+    )
+    healthcheck_interval_seconds: int = Field(
+        default=1, ge=1, description="Poll interval for readiness healthcheck"
+    )
+    graceful_shutdown_seconds: int = Field(
+        default=10, ge=1, description="Grace period for SIGTERM before SIGKILL"
+    )
+    working_dir: str | None = Field(
+        default=None, description="Working directory for the subprocess"
+    )
+    extra_env: dict[str, str] = Field(
+        default_factory=dict, description="Additional environment variables for the subprocess"
+    )
+    required: bool = Field(
+        default=False, description="If true and managed+autostart fails, fail app startup"
+    )
     discovery_refresh_interval_seconds: int = Field(
         default=600,
         ge=60,
@@ -152,12 +175,24 @@ class KilocodeSettings(BaseSettings):
     )
     command: str = Field(default="kilocode", description="Command to run for Kilocode server")
     port: int = Field(default=5096, ge=1, le=65535, description="Port for Kilocode server")
-    startup_timeout_seconds: int = Field(default=30, ge=5, description="Max seconds to wait for server to become healthy")
-    healthcheck_interval_seconds: int = Field(default=1, ge=1, description="Poll interval for readiness healthcheck")
-    graceful_shutdown_seconds: int = Field(default=10, ge=1, description="Grace period for SIGTERM before SIGKILL")
-    working_dir: str | None = Field(default=None, description="Working directory for the subprocess")
-    extra_env: dict[str, str] = Field(default_factory=dict, description="Additional environment variables for the subprocess")
-    required: bool = Field(default=False, description="If true and managed+autostart fails, fail app startup")
+    startup_timeout_seconds: int = Field(
+        default=30, ge=5, description="Max seconds to wait for server to become healthy"
+    )
+    healthcheck_interval_seconds: int = Field(
+        default=1, ge=1, description="Poll interval for readiness healthcheck"
+    )
+    graceful_shutdown_seconds: int = Field(
+        default=10, ge=1, description="Grace period for SIGTERM before SIGKILL"
+    )
+    working_dir: str | None = Field(
+        default=None, description="Working directory for the subprocess"
+    )
+    extra_env: dict[str, str] = Field(
+        default_factory=dict, description="Additional environment variables for the subprocess"
+    )
+    required: bool = Field(
+        default=False, description="If true and managed+autostart fails, fail app startup"
+    )
     discovery_refresh_interval_seconds: int = Field(
         default=600,
         ge=60,
@@ -195,8 +230,70 @@ class PipelineSettings(BaseSettings):
 
     enabled: bool = Field(default=True, description="Enable pipeline execution")
     max_stages: int = Field(default=3, ge=1, le=5, description="Max stages per pipeline")
-    max_total_time_ms: int = Field(default=180_000, ge=10_000, description="Max total pipeline execution time")
-    max_stage_retries: int = Field(default=1, ge=0, le=3, description="Default max retries per stage")
+    max_total_time_ms: int = Field(
+        default=180_000, ge=10_000, description="Max total pipeline execution time"
+    )
+    max_stage_retries: int = Field(
+        default=1, ge=0, le=3, description="Default max retries per stage"
+    )
+
+    # Model selection (Bandit / Exploration)
+    exploration_rate: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Exploration rate for multi-armed bandit (0.2 = 20% exploration)",
+    )
+    cold_start_threshold: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Sample count threshold to exit cold-start state",
+    )
+    exploration_min_successes: int = Field(
+        default=8,
+        ge=3,
+        le=20,
+        description="Successful explorations required to exit cold-start",
+    )
+
+
+class TransportFeatureFlags(BaseSettings):
+    """System-level feature flags for transport types.
+
+    When a transport is disabled:
+    - Models are excluded from unified_registry.list_models()
+    - Models are excluded from ModelSelector candidates
+    - Models are excluded from routing_engine
+    - Models are excluded from pipeline stage selection
+    - Discovery is skipped for that transport
+    - Models are excluded from scoring/intelligence
+    - Models do NOT appear in /v1/models
+    """
+
+    model_config = SettingsConfigDict(env_prefix="ENABLE_", extra="ignore")
+
+    browser_providers: bool = Field(
+        default=True,
+        description="Enable browser transport providers (Qwen, GLM, ChatGPT, etc.)",
+    )
+    api_providers: bool = Field(
+        default=True,
+        description="Enable API transport providers (OpenRouter, G4F, etc.)",
+    )
+    agent_providers: bool = Field(
+        default=True,
+        description="Enable agent transport providers (OpenCode, Kilocode, etc.)",
+    )
+
+    def is_transport_enabled(self, transport: str) -> bool:
+        """Check if a transport type is enabled."""
+        transport_map = {
+            "browser": self.browser_providers,
+            "api": self.api_providers,
+            "agent": self.agent_providers,
+        }
+        return transport_map.get(transport, True)
 
 
 class OpenRouterSettings(BaseSettings):
@@ -206,10 +303,16 @@ class OpenRouterSettings(BaseSettings):
 
     enabled: bool = Field(default=True, description="Enable OpenRouter provider")
     api_key: str | None = Field(default=None, description="OpenRouter API key")
-    base_url: str = Field(default="https://openrouter.ai/api/v1", description="OpenRouter API base URL")
+    base_url: str = Field(
+        default="https://openrouter.ai/api/v1", description="OpenRouter API base URL"
+    )
     only_free: bool = Field(default=False, description="Only include free models")
-    include_free_router: bool = Field(default=False, description="Include the special openrouter/free router model")
-    discovery_on_startup: bool = Field(default=True, description="Discover models from OpenRouter API at startup")
+    include_free_router: bool = Field(
+        default=False, description="Include the special openrouter/free router model"
+    )
+    discovery_on_startup: bool = Field(
+        default=True, description="Discover models from OpenRouter API at startup"
+    )
 
 
 class Settings(BaseSettings):
@@ -268,6 +371,7 @@ class Settings(BaseSettings):
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
     model_discovery: ModelDiscoverySettings = Field(default_factory=ModelDiscoverySettings)
+    transport_feature_flags: TransportFeatureFlags = Field(default_factory=TransportFeatureFlags)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -299,6 +403,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "openrouter", OpenRouterSettings())
         if "model_discovery" not in kwargs:
             object.__setattr__(self, "model_discovery", ModelDiscoverySettings())
+        if "transport_feature_flags" not in kwargs:
+            object.__setattr__(self, "transport_feature_flags", TransportFeatureFlags())
 
 
 settings = Settings()

@@ -21,6 +21,7 @@ import time
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.transport_filters import is_transport_enabled
 from app.integrations.registry import api_registry
 
 logger = get_logger(__name__)
@@ -89,53 +90,57 @@ class ModelDiscoveryService:
         results: dict[str, dict] = {}
 
         # Discover API providers via existing api_registry.initialize()
-        try:
-            await api_registry.initialize()
-            api_models = api_registry.discovered_models()
-            results["api"] = {"status": "ok", "model_count": len(api_models)}
+        if is_transport_enabled("api"):
+            try:
+                await api_registry.initialize()
+                api_models = api_registry.discovered_models()
+                results["api"] = {"status": "ok", "model_count": len(api_models)}
 
-            # Capture per-provider snapshots and notify intelligence tracker
-            for status_item in api_registry.get_provider_status():
-                pid = status_item.get("integration_id", status_item.get("provider_id", "unknown"))
-                model_ids = status_item.get("discovered_models", [])
-                if not model_ids and status_item.get("model_count", 0) > 0:
-                    model_ids = [
-                        m["id"]
-                        for m in api_registry.list_models()
-                        if m.get("provider_id") == pid
-                    ]
-                self._snapshots[pid] = ProviderSnapshot(pid, model_ids)
+                # Capture per-provider snapshots and notify intelligence tracker
+                for status_item in api_registry.get_provider_status():
+                    pid = status_item.get("integration_id", status_item.get("provider_id", "unknown"))
+                    model_ids = status_item.get("discovered_models", [])
+                    if not model_ids and status_item.get("model_count", 0) > 0:
+                        model_ids = [
+                            m["id"]
+                            for m in api_registry.list_models()
+                            if m.get("provider_id") == pid
+                        ]
+                    self._snapshots[pid] = ProviderSnapshot(pid, model_ids)
 
-                # Notify intelligence tracker
-                from app.intelligence.tracker import model_intelligence_tracker
-                model_intelligence_tracker.on_discovery_complete(
-                    pid, model_ids, source="api_registry"
-                )
+                    # Notify intelligence tracker
+                    from app.intelligence.tracker import model_intelligence_tracker
+                    model_intelligence_tracker.on_discovery_complete(
+                        pid, model_ids, source="api_registry"
+                    )
 
-        except Exception as exc:
-            logger.exception("API provider discovery failed", error=str(exc))
-            results["api"] = {"status": "failed", "error": str(exc)}
+            except Exception as exc:
+                logger.exception("API provider discovery failed", error=str(exc))
+                results["api"] = {"status": "failed", "error": str(exc)}
 
-            # Still capture whatever models were discovered
-            for status_item in api_registry.get_provider_status():
-                pid = status_item.get("integration_id", "unknown")
-                model_ids = status_item.get("discovered_models", [])
-                if not model_ids:
-                    model_ids = [
-                        m["id"]
-                        for m in api_registry.list_models()
-                        if m.get("provider_id") == pid
-                    ]
-                snapshot = ProviderSnapshot(pid, model_ids)
-                if status_item.get("last_refresh_status") == "failed":
-                    snapshot.mark_failed(status_item.get("last_refresh_error", "unknown"))
-                self._snapshots[pid] = snapshot
+                # Still capture whatever models were discovered
+                for status_item in api_registry.get_provider_status():
+                    pid = status_item.get("integration_id", "unknown")
+                    model_ids = status_item.get("discovered_models", [])
+                    if not model_ids:
+                        model_ids = [
+                            m["id"]
+                            for m in api_registry.list_models()
+                            if m.get("provider_id") == pid
+                        ]
+                    snapshot = ProviderSnapshot(pid, model_ids)
+                    if status_item.get("last_refresh_status") == "failed":
+                        snapshot.mark_failed(status_item.get("last_refresh_error", "unknown"))
+                    self._snapshots[pid] = snapshot
 
-                # Notify intelligence tracker even on partial failure
-                from app.intelligence.tracker import model_intelligence_tracker
-                model_intelligence_tracker.on_discovery_complete(
-                    pid, model_ids, source="api_registry_partial"
-                )
+                    # Notify intelligence tracker even on partial failure
+                    from app.intelligence.tracker import model_intelligence_tracker
+                    model_intelligence_tracker.on_discovery_complete(
+                        pid, model_ids, source="api_registry_partial"
+                    )
+        else:
+            logger.info("API transport disabled — skipping API discovery")
+            results["api"] = {"status": "skipped", "reason": "ENABLE_API_PROVIDERS=false"}
 
         logger.info(
             "Model discovery complete",

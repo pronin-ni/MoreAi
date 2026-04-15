@@ -100,7 +100,11 @@ class ModelRuntimeStats:
         """Combined availability: circuit breaker + health + success rate."""
         if self.circuit_open:
             return 0.0
-        circuit_penalty = 1.0 if self.consecutive_failures == 0 else max(0.3, 1.0 - self.consecutive_failures * 0.15)
+        circuit_penalty = (
+            1.0
+            if self.consecutive_failures == 0
+            else max(0.3, 1.0 - self.consecutive_failures * 0.15)
+        )
         return min(1.0, self.success_rate * 0.5 + self.health_score * 0.3 + circuit_penalty * 0.2)
 
     @property
@@ -184,6 +188,48 @@ class FallbackMode(StrEnum):
     FAIL = "fail"
 
 
+class SelectionMode(StrEnum):
+    """Selection objective/mode for model ranking."""
+
+    FAST = "fast"
+    BALANCED = "balanced"
+    QUALITY = "quality"
+    DEEP = "deep"
+    EXPLORE = "explore"  # exploration mode for cold-start models
+
+
+# Objective-based ranking weights
+# Each mode defines how to weight different factors when scoring models
+SELECTION_MODE_WEIGHTS = {
+    SelectionMode.FAST: {
+        "latency": 0.6,
+        "success_rate": 0.3,
+        "quality": 0.1,
+    },
+    SelectionMode.BALANCED: {
+        "latency": 0.3,
+        "success_rate": 0.3,
+        "quality": 0.4,
+    },
+    SelectionMode.QUALITY: {
+        "latency": 0.1,
+        "success_rate": 0.3,
+        "quality": 0.6,
+    },
+    SelectionMode.DEEP: {
+        "latency": 0.05,
+        "success_rate": 0.35,
+        "quality": 0.6,
+    },
+    SelectionMode.EXPLORE: {
+        "latency": 0.1,
+        "success_rate": 0.2,
+        "quality": 0.1,
+        "novelty": 0.6,  # prefer cold-start / untested models
+    },
+}
+
+
 class SelectionPolicy(BaseModel):
     """Model selection policy for a pipeline stage.
 
@@ -234,6 +280,10 @@ class SelectionPolicy(BaseModel):
         ge=0,
         le=5,
         description="Max fallback attempts before giving up",
+    )
+    selection_mode: SelectionMode = Field(
+        default=SelectionMode.BALANCED,
+        description="Selection objective for ranking (fast/balanced/quality/deep/explore)",
     )
 
 
@@ -331,11 +381,17 @@ class SelectionTrace:
     selected_model: str = ""
     selected_provider: str = ""
     selected_transport: str = ""
-    selected_candidate: CandidateRanking | None = None  # Full ranking object for the selected candidate
+    selected_candidate: CandidateRanking | None = (
+        None  # Full ranking object for the selected candidate
+    )
 
     # Selection context
     previous_stage_model: str = ""
     selection_policy: dict[str, Any] = field(default_factory=dict)
+
+    # Bandit / Exploration context
+    is_exploration: bool = False  # True if selected via exploration (cold-start)
+    selection_reason: str = ""  # Human-readable reason: "low_latency", "high_quality", etc.
 
     # Fallback info
     fallback_count: int = 0
@@ -350,6 +406,9 @@ class SelectionTrace:
             "selected_provider": self.selected_provider,
             "selected_transport": self.selected_transport,
             "previous_stage_model": self.previous_stage_model,
+            "selection_policy": self.selection_policy,
+            "is_exploration": self.is_exploration,
+            "selection_reason": self.selection_reason,
             "all_candidates": [c.to_dict() for c in self.all_candidates],
             "fallback_count": self.fallback_count,
             "fallback_chain": self.fallback_chain,

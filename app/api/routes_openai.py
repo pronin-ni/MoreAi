@@ -115,6 +115,80 @@ async def list_models_diagnostics() -> dict:
     return {"models": unified_registry.list_models()}
 
 
+@router.get("/diagnostics/agents")
+async def list_agent_diagnostics() -> dict:
+    """Detailed diagnostics for agent providers (OpenCode, Kilocode, etc.)."""
+    from app.agents.registry import registry as agent_registry
+
+    logger.info("Listing agent provider diagnostics")
+    return agent_registry.diagnostics()
+
+
+@router.get("/diagnostics/transports")
+async def list_transport_status() -> dict:
+    """Transport feature flag status and model counts.
+
+    Shows which transport types (browser, api, agent) are enabled/disabled
+    via config and how many models are available for each.
+    """
+    from app.agents.registry import registry as agent_registry
+    from app.browser.registry import registry as browser_registry
+    from app.core.config import settings
+    from app.integrations.registry import api_registry
+
+    flags = settings.transport_feature_flags
+
+    # Count models per transport (before filtering)
+    browser_count = len(browser_registry.list_models())
+    api_count = len(api_registry.list_models())
+    agent_count = len(agent_registry.list_models())
+
+    # Count after filtering
+    all_models = [
+        *browser_registry.list_models(),
+        *api_registry.list_models(),
+        *agent_registry.list_models(),
+    ]
+    from app.core.transport_filters import filter_models_by_transport
+
+    filtered_models = filter_models_by_transport(all_models)
+
+    filtered_counts: dict[str, int] = {}
+    for m in filtered_models:
+        t = m.get("transport", "unknown")
+        filtered_counts[t] = filtered_counts.get(t, 0) + 1
+
+    return {
+        "feature_flags": {
+            "browser_providers": {
+                "enabled": flags.browser_providers,
+                "env_var": "ENABLE_BROWSER_PROVIDERS",
+                "total_models": browser_count,
+                "visible_models": filtered_counts.get("browser", 0),
+                "status": "ENABLED" if flags.browser_providers else "DISABLED",
+            },
+            "api_providers": {
+                "enabled": flags.api_providers,
+                "env_var": "ENABLE_API_PROVIDERS",
+                "total_models": api_count,
+                "visible_models": filtered_counts.get("api", 0),
+                "status": "ENABLED" if flags.api_providers else "DISABLED",
+            },
+            "agent_providers": {
+                "enabled": flags.agent_providers,
+                "env_var": "ENABLE_AGENT_PROVIDERS",
+                "total_models": agent_count,
+                "visible_models": filtered_counts.get("agent", 0),
+                "status": "ENABLED" if flags.agent_providers else "DISABLED",
+            },
+        },
+        "total_models": {
+            "before_filtering": len(all_models),
+            "after_filtering": len(filtered_models),
+        },
+    }
+
+
 @router.post(
     "/v1/chat/completions",
     response_model=ChatCompletionResponse,
@@ -218,9 +292,8 @@ async def _execute_pipeline(
         )
 
     # Resolve pipeline definition
-    pipeline_def = (
-        pipeline_registry.get_by_model_id(body.model)
-        or pipeline_registry.get(body.model.removeprefix("pipeline/"))
+    pipeline_def = pipeline_registry.get_by_model_id(body.model) or pipeline_registry.get(
+        body.model.removeprefix("pipeline/")
     )
 
     if pipeline_def is None:
@@ -295,24 +368,26 @@ async def list_pipelines():
     """List all registered pipelines with basic info."""
     pipelines = []
     for pdef in pipeline_registry.list_all():
-        pipelines.append({
-            "pipeline_id": pdef.pipeline_id,
-            "model_id": pdef.model_id,
-            "display_name": pdef.display_name,
-            "description": pdef.description,
-            "enabled": pdef.enabled,
-            "stage_count": len(pdef.stages),
-            "stages": [
-                {
-                    "stage_id": s.stage_id,
-                    "role": s.role.value,
-                    "target_model": s.target_model,
-                    "failure_policy": s.failure_policy.value,
-                    "max_retries": s.max_retries,
-                }
-                for s in pdef.stages
-            ],
-        })
+        pipelines.append(
+            {
+                "pipeline_id": pdef.pipeline_id,
+                "model_id": pdef.model_id,
+                "display_name": pdef.display_name,
+                "description": pdef.description,
+                "enabled": pdef.enabled,
+                "stage_count": len(pdef.stages),
+                "stages": [
+                    {
+                        "stage_id": s.stage_id,
+                        "role": s.role.value,
+                        "target_model": s.target_model,
+                        "failure_policy": s.failure_policy.value,
+                        "max_retries": s.max_retries,
+                    }
+                    for s in pdef.stages
+                ],
+            }
+        )
     return {"pipelines": pipelines, "total": len(pipelines)}
 
 
@@ -351,7 +426,9 @@ async def pipeline_traces(limit: int = 20):
 
 
 @router.get("/admin/pipelines/executions")
-async def list_executions(pipeline_id: str | None = None, status: str | None = None, limit: int = 20):
+async def list_executions(
+    pipeline_id: str | None = None, status: str | None = None, limit: int = 20
+):
     """List recent pipeline executions with filtering."""
     from app.pipeline.observability.store import execution_store
 
@@ -378,6 +455,7 @@ async def get_execution_detail(execution_id: str):
     if summary is None:
         try:
             from app.pipeline.observability.persistent_store import get_persistent_store
+
             persistent = get_persistent_store()
             exec_data = persistent.get(execution_id)
             if exec_data is None:
@@ -414,6 +492,7 @@ async def get_execution_summary(execution_id: str):
         # Try persistent store
         try:
             from app.pipeline.observability.persistent_store import get_persistent_store
+
             persistent = get_persistent_store()
             exec_data = persistent.get(execution_id)
             if exec_data is None:
@@ -499,13 +578,22 @@ async def get_stage_scoring(model_id: str | None = None, stage_role: str | None 
             # Get performance stats
             try:
                 from app.pipeline.observability.stage_perf import stage_performance as perf_tracker
+
                 perf_stats = perf_tracker.get_model_role_stats(mid, role)
             except Exception:
-                perf_stats = {"sample_count": 0, "success_rate": 0.5, "fallback_rate": 0.0, "avg_duration_ms": 0.0}
+                perf_stats = {
+                    "sample_count": 0,
+                    "success_rate": 0.5,
+                    "fallback_rate": 0.0,
+                    "avg_duration_ms": 0.0,
+                }
 
             # Get scoring breakdown
             breakdown = suitability_scorer.compute_breakdown(
-                mid, provider_id, transport, role,
+                mid,
+                provider_id,
+                transport,
+                role,
             )
 
             sample_count = perf_stats.get("sample_count", 0)
@@ -517,37 +605,42 @@ async def get_stage_scoring(model_id: str | None = None, stage_role: str | None 
             fallback_heavy = fallback_rate > 0.2 and sample_count >= 5
             top_performer = success_rate >= 0.9 and sample_count >= 5
 
-            scoring_results.append({
-                "model_id": mid,
-                "provider_id": provider_id,
-                "transport": transport,
-                "role": role,
-                "final_score": round(breakdown.final_score, 3),
-                "base_static_score": round(breakdown.base_static_score, 3),
-                "dynamic_adjustment": round(breakdown.dynamic_adjustment, 3),
-                "failure_penalty": round(breakdown.failure_penalty, 3),
-                "penalty_reasons": breakdown.penalty_reasons,
-                "success_rate": round(success_rate, 3),
-                "fallback_rate": round(fallback_rate, 3),
-                "avg_duration_ms": round(perf_stats.get("avg_duration_ms", 0.0), 1),
-                "sample_count": sample_count,
-                "data_confidence": round(breakdown.data_confidence, 3),
-                "tags": sorted(tags),
-                "cold_start": cold_start,
-                "fallback_heavy": fallback_heavy,
-                "top_performer": top_performer,
-                # Quality metrics
-                "quality_score": round(breakdown.quality_score, 3),
-                "quality_adjustment": round(breakdown.quality_adjustment, 3),
-                "quality_sample_count": breakdown.quality_sample_count,
-                "quality_confidence": round(breakdown.quality_confidence, 3),
-                "high_quality": breakdown.quality_score >= 0.7 and breakdown.quality_sample_count >= 3,
-                "low_quality": breakdown.quality_score < 0.35 and breakdown.quality_sample_count >= 3,
-            })
+            scoring_results.append(
+                {
+                    "model_id": mid,
+                    "provider_id": provider_id,
+                    "transport": transport,
+                    "role": role,
+                    "final_score": round(breakdown.final_score, 3),
+                    "base_static_score": round(breakdown.base_static_score, 3),
+                    "dynamic_adjustment": round(breakdown.dynamic_adjustment, 3),
+                    "failure_penalty": round(breakdown.failure_penalty, 3),
+                    "penalty_reasons": breakdown.penalty_reasons,
+                    "success_rate": round(success_rate, 3),
+                    "fallback_rate": round(fallback_rate, 3),
+                    "avg_duration_ms": round(perf_stats.get("avg_duration_ms", 0.0), 1),
+                    "sample_count": sample_count,
+                    "data_confidence": round(breakdown.data_confidence, 3),
+                    "tags": sorted(tags),
+                    "cold_start": cold_start,
+                    "fallback_heavy": fallback_heavy,
+                    "top_performer": top_performer,
+                    # Quality metrics
+                    "quality_score": round(breakdown.quality_score, 3),
+                    "quality_adjustment": round(breakdown.quality_adjustment, 3),
+                    "quality_sample_count": breakdown.quality_sample_count,
+                    "quality_confidence": round(breakdown.quality_confidence, 3),
+                    "high_quality": breakdown.quality_score >= 0.7
+                    and breakdown.quality_sample_count >= 3,
+                    "low_quality": breakdown.quality_score < 0.35
+                    and breakdown.quality_sample_count >= 3,
+                }
+            )
 
     # Enrich with cross-stage data from quality store
     try:
         from app.pipeline.observability.quality_scoring import quality_metrics_store
+
         qs_summaries = quality_metrics_store.get_all_quality_summary(role=role)
         qs_map = {f"{s['model_id']}:{s.get('provider_id', '')}": s for s in qs_summaries}
         for s in scoring_results:
@@ -773,17 +866,17 @@ async def get_stage_quality(role: str | None = None):
 
     # Derive top/low quality lists
     top_quality = [s for s in summaries if s["sample_count"] >= 3][:10]
-    low_quality = [
-        s for s in summaries
-        if s["sample_count"] >= 3 and s["avg_quality"] < 0.4
-    ][:10]
+    low_quality = [s for s in summaries if s["sample_count"] >= 3 and s["avg_quality"] < 0.4][:10]
 
     # Determine quality stability (high stddev = unstable)
     for s in summaries:
         s["quality_label"] = (
-            "high_quality" if s["avg_quality"] >= 0.7 and s["sample_count"] >= 3
-            else "low_quality" if s["avg_quality"] < 0.35 and s["sample_count"] >= 3
-            else "unstable_quality" if s.get("max_quality", 1) - s.get("min_quality", 0) > 0.5 and s["sample_count"] >= 3
+            "high_quality"
+            if s["avg_quality"] >= 0.7 and s["sample_count"] >= 3
+            else "low_quality"
+            if s["avg_quality"] < 0.35 and s["sample_count"] >= 3
+            else "unstable_quality"
+            if s.get("max_quality", 1) - s.get("min_quality", 0) > 0.5 and s["sample_count"] >= 3
             else "normal"
         )
 
@@ -799,6 +892,7 @@ async def get_stage_quality(role: str | None = None):
 async def get_stage_quality_for_role(role: str):
     """Get quality breakdown for a specific stage role."""
     from fastapi.responses import RedirectResponse
+
     return RedirectResponse(url=f"/admin/pipelines/stage-quality?role={role}")
 
 
@@ -855,6 +949,7 @@ async def get_cross_stage_quality(role: str | None = None, window: str | None = 
 async def get_scoring_for_role(role: str):
     """Get scoring breakdown for all models in a specific stage role."""
     from fastapi.responses import RedirectResponse
+
     return RedirectResponse(url=f"/admin/pipelines/stage-scoring?stage_role={role}")
 
 
@@ -898,7 +993,9 @@ async def get_stage_performance_trends():
 
 
 @router.get("/admin/pipelines/executions/persistent")
-async def list_persistent_executions(pipeline_id: str | None = None, status: str | None = None, limit: int = 20):
+async def list_persistent_executions(
+    pipeline_id: str | None = None, status: str | None = None, limit: int = 20
+):
     """List recent executions from the persistent SQLite store."""
     from app.pipeline.observability.persistent_store import get_persistent_store
 
@@ -1152,42 +1249,46 @@ async def list_model_intelligence():
 
     for stats in all_stats:
         suitability = suitability_scorer.compute_suitability(
-            stats.model_id, stats.provider_id, stats.transport,
+            stats.model_id,
+            stats.provider_id,
+            stats.transport,
         )
         tags = capability_registry.get_tags(stats.model_id, stats.provider_id)
 
-        models.append({
-            "model_id": stats.model_id,
-            "provider_id": stats.provider_id,
-            "transport": stats.transport,
-            "availability": {
-                "score": round(stats.availability_score, 3),
-                "success_rate": round(stats.success_rate, 3),
-                "failure_rate": round(stats.failure_rate, 3),
-                "circuit_open": stats.circuit_open,
-                "consecutive_failures": stats.consecutive_failures,
-                "health_score": round(stats.health_score, 3),
-            },
-            "latency": {
-                "avg_s": round(stats.avg_latency_s, 2),
-                "p50_s": round(stats.p50_latency_s, 2),
-                "p95_s": round(stats.p95_latency_s, 2),
-                "score": round(stats.latency_score, 3),
-            },
-            "stability_score": round(stats.stability_score, 3),
-            "capability_tags": sorted(tags),
-            "stage_suitability": {
-                "generate": round(suitability.generate_score, 3),
-                "review": round(suitability.review_score, 3),
-                "critique": round(suitability.critique_score, 3),
-                "refine": round(suitability.refine_score, 3),
-                "verify": round(suitability.verify_score, 3),
-                "transform": round(suitability.transform_score, 3),
-            },
-            "recommended_roles": _get_recommended_roles(suitability),
-            "request_count": stats.request_count,
-            "fallback_count": stats.fallback_count,
-        })
+        models.append(
+            {
+                "model_id": stats.model_id,
+                "provider_id": stats.provider_id,
+                "transport": stats.transport,
+                "availability": {
+                    "score": round(stats.availability_score, 3),
+                    "success_rate": round(stats.success_rate, 3),
+                    "failure_rate": round(stats.failure_rate, 3),
+                    "circuit_open": stats.circuit_open,
+                    "consecutive_failures": stats.consecutive_failures,
+                    "health_score": round(stats.health_score, 3),
+                },
+                "latency": {
+                    "avg_s": round(stats.avg_latency_s, 2),
+                    "p50_s": round(stats.p50_latency_s, 2),
+                    "p95_s": round(stats.p95_latency_s, 2),
+                    "score": round(stats.latency_score, 3),
+                },
+                "stability_score": round(stats.stability_score, 3),
+                "capability_tags": sorted(tags),
+                "stage_suitability": {
+                    "generate": round(suitability.generate_score, 3),
+                    "review": round(suitability.review_score, 3),
+                    "critique": round(suitability.critique_score, 3),
+                    "refine": round(suitability.refine_score, 3),
+                    "verify": round(suitability.verify_score, 3),
+                    "transform": round(suitability.transform_score, 3),
+                },
+                "recommended_roles": _get_recommended_roles(suitability),
+                "request_count": stats.request_count,
+                "fallback_count": stats.fallback_count,
+            }
+        )
 
     return {"models": models, "total": len(models)}
 
@@ -1212,17 +1313,22 @@ async def get_ranking_for_role(role: str, limit: int = 10):
 
     for stats in all_stats:
         stage_score = suitability_scorer.compute_for_role(
-            stats.model_id, stats.provider_id, stats.transport, role,
+            stats.model_id,
+            stats.provider_id,
+            stats.transport,
+            role,
         )
 
-        ranked.append({
-            "model_id": stats.model_id,
-            "provider_id": stats.provider_id,
-            "transport": stats.transport,
-            "stage_score": round(stage_score, 3),
-            "availability_score": round(stats.availability_score, 3),
-            "final_score": round(stage_score * 0.6 + stats.availability_score * 0.4, 3),
-        })
+        ranked.append(
+            {
+                "model_id": stats.model_id,
+                "provider_id": stats.provider_id,
+                "transport": stats.transport,
+                "stage_score": round(stage_score, 3),
+                "availability_score": round(stats.availability_score, 3),
+                "final_score": round(stage_score * 0.6 + stats.availability_score * 0.4, 3),
+            }
+        )
 
     # Sort by final score
     ranked.sort(key=lambda r: r["final_score"], reverse=True)
@@ -1231,6 +1337,67 @@ async def get_ranking_for_role(role: str, limit: int = 10):
         "role": role,
         "ranked_models": ranked[:limit],
         "total_candidates": len(ranked),
+    }
+
+
+@router.get("/admin/models/exploration")
+async def get_exploration_status():
+    """Get exploration status for all tracked models.
+
+    Shows:
+    - Which models are in cold-start state
+    - Exploration attempts count
+    - Success rate
+    - Whether they participate in selection
+    """
+    from app.intelligence.stats import stats_aggregator
+    from app.intelligence.tracker import model_intelligence_tracker
+
+    all_entries = model_intelligence_tracker.get_all_entries()
+    all_stats = stats_aggregator.get_all_model_stats()
+
+    # Build stats lookup
+    stats_lookup = {(s.model_id, s.provider_id, s.transport): s for s in all_stats}
+
+    cold_start_models = []
+    established_models = []
+
+    for entry in all_entries:
+        # Get runtime stats
+        provider_id = entry.last_provider or ""
+        transport = _resolve_transport(entry.canonical_id)
+        stats = stats_lookup.get((entry.canonical_id, provider_id, transport))
+
+        sample_count = stats.request_count if stats else 0
+        success_rate = stats.success_rate if stats else 0.0
+
+        model_info = {
+            "model_id": entry.canonical_id,
+            "is_cold_start": entry.is_cold_start,
+            "exploration_attempts": entry.exploration_attempts,
+            "successful_explorations": entry.successful_explorations,
+            "sample_count": sample_count,
+            "success_rate": round(success_rate, 3),
+            "is_currently_available": entry.is_currently_available,
+            "participates_in_selection": entry.is_cold_start or entry.is_currently_available,
+        }
+
+        if entry.is_cold_start:
+            cold_start_models.append(model_info)
+        else:
+            established_models.append(model_info)
+
+    # Sort by exploration attempts (most explored first)
+    cold_start_models.sort(key=lambda m: m["exploration_attempts"], reverse=True)
+    established_models.sort(key=lambda m: m["sample_count"], reverse=True)
+
+    return {
+        "exploration_rate": settings.pipeline.exploration_rate,
+        "cold_start_threshold": settings.pipeline.cold_start_threshold,
+        "exploration_min_successes": settings.pipeline.exploration_min_successes,
+        "cold_start_models": cold_start_models,
+        "established_models": established_models,
+        "total_tracked": len(all_entries),
     }
 
 
@@ -1247,3 +1414,14 @@ def _get_recommended_roles(suitability) -> list[str]:
 
     sorted_roles = sorted(thresholds.items(), key=lambda x: x[1], reverse=True)
     return [role for role, score in sorted_roles[:2] if score >= 0.6]
+
+
+def _resolve_transport(canonical_id: str) -> str:
+    """Resolve transport type from canonical model ID."""
+    if canonical_id.startswith("browser/"):
+        return "browser"
+    if canonical_id.startswith("agent/"):
+        return "agent"
+    if canonical_id.startswith("api/"):
+        return "api"
+    return "api"
