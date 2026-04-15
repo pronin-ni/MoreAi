@@ -68,7 +68,6 @@ async def studio_page():
                 "description": mode_config["description"],
                 "available": available,
                 "is_pipeline": is_pipeline,
-                "magic": mode_config.get("magic", ""),
             }
         )
 

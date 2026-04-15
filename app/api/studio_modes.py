@@ -73,18 +73,16 @@ STUDIO_MODE_POLICIES: dict[str, dict] = {
     # Search: web search pipeline
     "search": {
         "label": "Поиск",
-        "description": "Поиск в интернете с ответами и источниками",
+        "description": "Поиск в интернете с источниками",
         "is_pipeline": True,
         "pipeline_id": "search-answer",
-        "magic": "Система ищет в интернете (DuckDuckGo/SearXNG), скачивает содержание страниц, генерирует ответ с цитатами источников [1], [2]...",
     },
     # Explore: exploration pipeline for new models
     "explore": {
         "label": "Исследовать",
-        "description": "Попробовать новые модели (cold-start)",
+        "description": "Пробовать новые модели",
         "is_pipeline": True,
         "pipeline_id": "explore-and-answer",
-        "magic": "Система выбирает модели в режиме исследования (20% шанс попробовать новую модель), чтобы узнать её возможности и улучшить будущие рекомендации",
     },
 }
 
