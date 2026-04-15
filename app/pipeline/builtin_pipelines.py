@@ -360,16 +360,17 @@ _SEARCH_REFINE_POLICY = {
 
 SEARCH_ANSWER = PipelineDefinition(
     pipeline_id="search-answer",
-    display_name="Search → Synthesize → Refine",
+    display_name="Search → Synthesize",
     description=(
-        "Perplexity-style: web search → synthesize answer with sources → "
-        "optional refine for formatting"
+        "Perplexity-style: web search → synthesize answer with sources. "
+        "Refine disabled for stability."
     ),
     enabled=True,
     max_total_time_ms=120_000,
     max_stage_retries=1,
     stages=[
         # Stage 1: Synthesize - generates FINAL answer with sources
+        # Refine stage DISABLED - causes quality degradation
         PipelineStage(
             stage_id="synthesize",
             role=StageRole.GENERATE,
@@ -384,31 +385,16 @@ SEARCH_ANSWER = PipelineDefinition(
             max_retries=1,
             prompt_template=None,
         ),
-        # Stage 2: Optional refine - formatting only, never use for correctness
-        PipelineStage(
-            stage_id="refine",
-            role=StageRole.REFINE,
-            selection_policy=_SEARCH_REFINE_POLICY,
-            input_mapping=InputMapping(
-                include_original_request=True,
-                include_previous_output=True,
-                custom_prompt_prefix=(
-                    "Improve formatting only. Keep all facts from the draft. "
-                    "Do NOT add new facts or change meaning.\n\n"
-                    "--- Question ---\n{original_request}\n\n"
-                    "--- Draft Answer ---\n{previous_output}\n\n"
-                    "Instructions:\n"
-                    "- Keep all factual information unchanged\n"
-                    "- Improve formatting and structure only\n"
-                    "- Keep citations in [N] format\n"
-                    "- Return FINAL answer only\n\n"
-                    "--- FINAL ANSWER ---"
-                ),
-            ),
-            output_mode=OutputMode.PLAIN_TEXT,
-            failure_policy=FailurePolicy.SKIP,
-            max_retries=1,
-        ),
+        # REFINE DISABLED - kept for reference but never runs
+        # PipelineStage(
+        #     stage_id="refine",
+        #     role=StageRole.REFINE,
+        #     selection_policy=_SEARCH_REFINE_POLICY,
+        #     input_mapping=InputMapping(
+        #         include_original_request=True,
+        # REFINE STAGE DISABLED
+        # - Causes quality degradation (replaces correct answer with incorrect)
+        # - Kept as placeholder for future when fixed
     ],
 )
 
