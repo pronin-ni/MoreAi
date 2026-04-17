@@ -1,4 +1,4 @@
-"""Search service with query expansion and deduplication."""
+"""Search service with query expansion, validation and retry logic."""
 
 from __future__ import annotations
 
@@ -8,7 +8,15 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.search.cache import page_cache, search_cache
 from app.search.fetcher import content_fetcher
-from app.search.models import SearchContext, SearchResult
+from app.search.models import (
+    MAX_RETRIES,
+    MIN_CONTENT_PAGES,
+    MIN_TOTAL_TEXT_LENGTH,
+    SearchContext,
+    SearchResult,
+    _generate_fallback_queries,
+    validate_context,
+)
 from app.search.query_expansion import expand_query
 from app.search.router import search_router
 
@@ -24,7 +32,7 @@ class SearchService:
         fetch_content: bool = False,
         max_results: int | None = None,
     ) -> SearchContext:
-        """Execute search with query expansion and optional content fetching.
+        """Execute search with validation, retry and optional content fetching.
 
         Args:
             query: User search query
@@ -37,10 +45,65 @@ class SearchService:
         context = SearchContext(original_query=query)
 
         try:
-            # Step 1: Expand query
-            expanded = await expand_query(query)
-            context.expanded_queries = expanded
-            logger.debug("query_expanded", original=query, variations=expanded)
+            # Perform search with potential retries
+            context = await self._search_with_retry(query, fetch_content, max_results, context)
+
+            # Final validation (after all retries)
+            context.validation_result, details, keywords = validate_context(
+                query,
+                context.search_results,
+                context.fetched_contents,
+            )
+            context.keywords_found = keywords
+
+            logger.info(
+                "search_validation",
+                query=query[:50],
+                validation_result=context.validation_result,
+                details=details,
+                retry_count=context.retry_count,
+                content_pages=len(context.fetched_contents),
+                total_text_length=context.total_text_length,
+            )
+
+            return context
+
+        except Exception as e:
+            logger.error("search_failed", query=query, error=str(e))
+            context.error = str(e)
+            context.validation_result = "ERROR"
+            return context
+
+    async def _search_with_retry(
+        self,
+        query: str,
+        fetch_content: bool,
+        max_results: int | None,
+        context: SearchContext,
+    ) -> SearchContext:
+        """Execute search with retry logic for insufficient context."""
+
+        # Track if we need more searches
+        needs_retry = True
+        current_query = query
+
+        while needs_retry and context.retry_count <= MAX_RETRIES:
+            # Step 1: Expand query (only on first attempt)
+            if context.retry_count == 0:
+                expanded = await expand_query(current_query)
+                context.expanded_queries = expanded
+            else:
+                # Generate fallback queries for retry
+                fallbacks = _generate_fallback_queries(current_query, context.retry_count - 1)
+                context.expanded_queries.extend(fallbacks)
+                expanded = [current_query] + fallbacks
+
+            logger.debug(
+                "search_attempt",
+                query=current_query,
+                attempt=context.retry_count,
+                expanded=expanded[:2],
+            )
 
             # Step 2: Search for each query
             all_results: list[SearchResult] = []
@@ -76,24 +139,53 @@ class SearchService:
             )
             context.search_results = unique_results
 
-            logger.info(
-                "search_total",
-                query=query,
-                expanded_count=len(expanded),
-                total_results=len(all_results),
-                unique_results=len(unique_results),
-            )
-
             # Step 4: Fetch content if requested
             if fetch_content and unique_results:
                 await self._fetch_contents(context, unique_results)
 
-            return context
+            # Calculate metrics
+            context.total_text_length = sum(len(c) for c in context.fetched_contents.values())
 
-        except Exception as e:
-            logger.error("search_failed", query=query, error=str(e))
-            context.error = str(e)
-            return context
+            # Validate this attempt
+            validation_result, details, keywords = validate_context(
+                current_query,
+                context.search_results,
+                context.fetched_contents,
+            )
+            context.keywords_found = keywords
+
+            logger.info(
+                "search_attempt_result",
+                query=current_query[:50],
+                attempt=context.retry_count,
+                validation_result=validation_result,
+                details=details,
+                content_pages=len(context.fetched_contents),
+                text_length=context.total_text_length,
+            )
+
+            # Decide: need retry?
+            if validation_result == "INSUFFICIENT" and context.retry_count < MAX_RETRIES:
+                context.retry_count += 1
+                # Continue loop with fallback query
+                logger.info(
+                    "search_retry_triggered",
+                    query=current_query,
+                    attempt=context.retry_count,
+                    reason=details,
+                )
+                # Clear contents to refetch with new query
+                context.fetched_contents.clear()
+                needs_retry = True
+            elif validation_result == "AMBIGUOUS":
+                # Don't retry ambiguous - let LLM handle it
+                context.validation_result = "AMBIGUOUS"
+                needs_retry = False
+            else:
+                # OK or ERROR - proceed
+                needs_retry = False
+
+        return context
 
     async def _fetch_contents(self, context: SearchContext, results: list[SearchResult]) -> None:
         """Fetch content from search result URLs."""

@@ -457,12 +457,20 @@ class PipelineExecutor:
             search_results = ctx.metadata.get("search_results", [])
             search_content = ctx.metadata.get("search_content", {})
             search_skipped = ctx.metadata.get("search_skipped", False)
+
+            # Get validation results from search
+            search_context_meta = ctx.metadata.get("search_context", {})
+            validation_result = search_context_meta.get("validation_result")
+            retry_count = search_context_meta.get("retry_count", 0)
+
             stage_prompt = build_search_stage_prompt(
                 stage_id=stage_def.stage_id,
                 original_request=ctx.original_user_input,
                 search_results=search_results,
                 search_content=search_content,
                 search_skipped=search_skipped,
+                validation_result=validation_result,
+                retry_count=retry_count,
             )
         else:
             stage_prompt = build_stage_prompt(
@@ -1321,12 +1329,16 @@ async def _search_pipeline_prepare(
             fetch_content=True,
         )
 
-        # Store in context metadata for use in stages
+        # Store validation results for pipeline
         ctx.metadata["search_context"] = {
             "original_query": search_context.original_query,
             "expanded_queries": search_context.expanded_queries,
             "result_count": len(search_context.search_results),
-            "content_fetched": len(search_context.fetched_contents),
+            "content_pages": len(search_context.fetched_contents),
+            "total_text_length": search_context.total_text_length,
+            "keywords_found": search_context.keywords_found,
+            "validation_result": search_context.validation_result,
+            "retry_count": search_context.retry_count,
             "sources": list(search_context.fetched_contents.keys()),
             "error": search_context.error,
         }
@@ -1338,12 +1350,19 @@ async def _search_pipeline_prepare(
             for r in search_context.search_results
         ]
 
+        # Store validation for prompt builder
+        ctx.metadata["search_validation"] = search_context.validation_result
+
+        # Log comprehensive results
         logger.info(
             "search_pipeline_complete",
             request_id=request_id,
             query=user_query[:50],
             results=len(search_context.search_results),
             content_pages=len(search_context.fetched_contents),
+            text_length=search_context.total_text_length,
+            validation_result=search_context.validation_result,
+            retry_count=search_context.retry_count,
             error=search_context.error,
         )
 

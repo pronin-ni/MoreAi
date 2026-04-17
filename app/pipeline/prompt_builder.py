@@ -101,6 +101,8 @@ def build_search_stage_prompt(
     search_results: list[dict],
     search_content: dict[str, str],
     search_skipped: bool,
+    validation_result: str | None = None,
+    retry_count: int = 0,
 ) -> str:
     """Build prompt for search stage with search results.
 
@@ -109,7 +111,12 @@ def build_search_stage_prompt(
     """
     # Special handling: if it's a search stage, build default search prompt
     return _build_search_default_prompt(
-        original_request, search_results, search_content, search_skipped
+        original_request,
+        search_results,
+        search_content,
+        search_skipped,
+        validation_result,
+        retry_count,
     )
 
 
@@ -155,8 +162,19 @@ def _build_search_default_prompt(
     search_results: list,
     search_content: dict,
     search_skipped: bool,
+    validation_result: str | None = None,
+    search_retry_count: int = 0,
 ) -> str:
-    """Build default prompt for synthesize stage (Perplexity-style)."""
+    """Build default prompt for synthesize stage (Perplexity-style).
+
+    Args:
+        original_request: User's original query
+        search_results: List of search result dicts
+        search_content: Dict of url -> extracted content
+        search_skipped: Whether search was skipped
+        validation_result: Validation result from validate_context (OK | INSUFFICIENT | AMBIGUOUS)
+        search_retry_count: Number of search retries attempted
+    """
     if search_skipped:
         return f"""Answer the question. Use your knowledge.
 
@@ -168,6 +186,32 @@ IMPORTANT:
 - No phrases like "I cannot evaluate" or "no answer"
 """
 
+    # Handle insufficient context case
+    if validation_result == "INSUFFICIENT":
+        return f"""Search returned insufficient data. Answer from your knowledge and be brief.
+
+Question: {original_request}
+
+IMPORTANT:
+- Web search found limited information
+- Answer based ONLY on what you confidently know
+- If unsure, state uncertainty briefly
+- NO meta-analysis or evaluation text
+"""
+
+    # Handle ambiguous query case
+    if validation_result == "AMBIGUOUS":
+        return f"""Answer the question. Clarify if needed.
+
+Question: {original_request}
+
+IMPORTANT:
+- If query is ambiguous, provide most relevant answer
+- Note any assumptions made
+- NO meta-analysis
+"""
+
+    # Normal case - OK validation
     if not search_results:
         return f"""Answer the question. No web results found.
 
