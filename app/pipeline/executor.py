@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     GatewayTimeoutError,
@@ -164,6 +165,53 @@ class PipelineExecutor:
         # Build execution context
         ctx = self._build_context(pipeline_def, request, request_id)
 
+        # Process conversation memory (if enabled)
+        memory_enabled = False
+        memory_context = ""
+        if settings.memory.enabled:
+            try:
+                from app.utils.memory import detect_intent, get_memory
+
+                session_id = request_id.split(":")[0]
+                memory = get_memory(session_id)
+
+                # Detect intent from current query
+                user_query = ctx.original_user_input
+                intent = detect_intent(user_query)
+                memory.last_intent = intent
+
+                logger.info(
+                    "intent_detected",
+                    request_id=request_id,
+                    intent=intent,
+                    query_preview=user_query[:50],
+                )
+
+                # Handle intent-based behavior
+                if intent == "new":
+                    memory.reset()
+                    logger.info(
+                        "memory_reset_new_intent",
+                        request_id=request_id,
+                        session_id=session_id,
+                    )
+                else:
+                    # Get conversation context for followup/refinement
+                    memory_context = memory.get_context()
+                    memory_enabled = bool(memory_context)
+
+                    # Store in context for prompt building
+                    ctx.memory_context = memory_context
+
+                    logger.info(
+                        "memory_injected",
+                        request_id=request_id,
+                        memory_enabled=memory_enabled,
+                        message_count=len(memory.messages),
+                    )
+            except Exception:
+                pass
+
         logger.info(
             "pipeline_started",
             request_id=request_id,
@@ -273,7 +321,33 @@ class PipelineExecutor:
             self._record_observability(ctx, pipeline_def, request_id)
 
             # Build OpenAI-compatible response
-            return self._build_response(ctx, final_result, pipeline_def)
+            response = self._build_response(ctx, final_result, pipeline_def)
+
+            # Record in conversation memory (if enabled)
+            if settings.memory.enabled:
+                try:
+                    from app.utils.memory import get_memory
+
+                    session_id = request_id.split(":")[0]
+                    memory = get_memory(session_id)
+
+                    # Add user query
+                    if ctx.original_user_input:
+                        memory.add_user_message(ctx.original_user_input)
+
+                    # Add assistant response
+                    if final_result.output:
+                        memory.add_assistant_message(final_result.output)
+
+                    logger.info(
+                        "memory_recorded",
+                        session_id=session_id,
+                        message_count=len(memory.messages),
+                    )
+                except Exception:
+                    pass
+
+            return response
 
         except BadRequestError, GatewayTimeoutError, InternalError:
             raise
@@ -562,6 +636,7 @@ class PipelineExecutor:
                 input_mapping=stage_def.input_mapping,
                 prompt_template=stage_def.prompt_template,
                 context=ctx,
+                memory_context=ctx.memory_context,
             )
 
         stage_messages = self._build_stage_messages(
@@ -786,6 +861,7 @@ class PipelineExecutor:
                 input_mapping=stage_def.input_mapping,
                 prompt_template=stage_def.prompt_template,
                 context=ctx,
+                memory_context=ctx.memory_context,
             )
 
             stage_messages = self._build_stage_messages(

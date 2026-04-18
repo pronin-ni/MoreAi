@@ -43,12 +43,17 @@ def build_stage_prompt(
     input_mapping: InputMapping,
     prompt_template: str | None,
     context: PipelineContext,
+    memory_context: str = "",
 ) -> str:
     """Build the prompt for a pipeline stage using input mapping and templates.
 
     This is the controlled handoff mechanism — stages only receive
     what the input_mapping explicitly allows.
     """
+    # Prepend memory context if available
+    if memory_context:
+        original_request = f"{memory_context}\n\nCurrent question:\n{original_request}"
+
     if prompt_template:
         return _render_template(prompt_template, stage_id, context)
 
@@ -360,4 +365,3 @@ def _build_legacy_grounded_prompt(
     )
 
     return "\n".join(parts)
-

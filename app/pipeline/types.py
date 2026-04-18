@@ -245,6 +245,7 @@ class PipelineContext:
     stage_outputs: dict[str, StageResult] = field(default_factory=dict)
     stage_summaries: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    memory_context: str = ""  # conversation context for memory-enabled sessions
 
     def get_previous_output(self, current_stage_id: str) -> str | None:
         """Get the output of the stage immediately before the current one."""

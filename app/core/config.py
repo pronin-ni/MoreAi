@@ -320,6 +320,33 @@ class SearchSettings(BaseSettings):
     )
 
 
+class MemorySettings(BaseSettings):
+    """Conversation memory and intent tracking configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="MEMORY_", extra="ignore")
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable conversation memory (does not affect behavior when disabled)",
+    )
+    max_history_messages: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Max messages to retain in conversation history",
+    )
+    max_context_chars: int = Field(
+        default=2000,
+        ge=500,
+        le=10000,
+        description="Max characters for conversation context",
+    )
+    enable_intent_tracking: bool = Field(
+        default=True,
+        description="Enable lightweight intent detection (new/followup/refinement)",
+    )
+
+
 class TransportFeatureFlags(BaseSettings):
     """System-level feature flags for transport types.
 
@@ -435,6 +462,7 @@ class Settings(BaseSettings):
     model_discovery: ModelDiscoverySettings = Field(default_factory=ModelDiscoverySettings)
     transport_feature_flags: TransportFeatureFlags = Field(default_factory=TransportFeatureFlags)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
