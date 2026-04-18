@@ -273,9 +273,9 @@ class SearchSettings(BaseSettings):
         description="SearXNG instance base URL",
     )
     timeout: int = Field(
-        default=5,
+        default=25,
         ge=1,
-        le=30,
+        le=60,
         description="Search provider timeout in seconds",
     )
     max_results: int = Field(
@@ -285,10 +285,10 @@ class SearchSettings(BaseSettings):
         description="Max search results per query",
     )
     max_queries: int = Field(
-        default=3,
+        default=1,
         ge=1,
         le=10,
-        description="Max number of queries to generate (original + variations)",
+        description="Max number of queries (1 = no expansion)",
     )
     fetch_timeout: int = Field(
         default=5,
@@ -297,10 +297,14 @@ class SearchSettings(BaseSettings):
         description="Content fetch timeout in seconds",
     )
     fetch_max_pages: int = Field(
-        default=3,
+        default=5,
         ge=1,
         le=10,
         description="Max number of pages to fetch content from",
+    )
+    query_expansion_enabled: bool = Field(
+        default=False,
+        description="Enable query expansion (disabled for stability)",
     )
     cache_ttl_seconds: int = Field(
         default=600,

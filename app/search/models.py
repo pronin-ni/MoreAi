@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 # Constants for validation thresholds
 MIN_CONTENT_PAGES = 3
 MIN_TOTAL_TEXT_LENGTH = 2000
-MAX_RETRIES = 2
+# Note: retry logic removed - single-pass search only
 
 # Ambiguity detection heuristics (simple, no LLM)
 AMBIGUOUS_PATTERNS = [
@@ -25,48 +25,6 @@ AMBIGUOUS_PATTERNS = [
     r"\?",  # Question with question mark in query
     r"\b(should I|should I|which should)\b",  # Advice-seeking
 ]
-
-# Fallback query patterns for retry (simple heuristics)
-QUERY_MODIFIERS = [
-    lambda q: re.sub(r"\b(best|top|good|great|awesome|amazing)\b", "", q, flags=re.IGNORECASE),
-    lambda q: re.sub(r"\s+", " ", q).strip(),
-    lambda q: re.sub(r"\bin\b\s+", "", q, flags=re.IGNORECASE),  # Remove "in [location]"
-    lambda q: re.sub(r"\b\d{4}\b", "", q),  # Remove years
-]
-
-
-def _generate_fallback_queries(query: str, attempt: int) -> list[str]:
-    """Generate fallback queries using simple heuristics (no LLM).
-
-    Args:
-        query: Original user query
-        attempt: Current retry attempt (0-indexed)
-
-    Returns:
-        List of alternative queries to try
-    """
-    fallback_queries = []
-
-    # Get modifier for this attempt
-    modifier = QUERY_MODIFIERS[attempt % len(QUERY_MODIFIERS)]
-    modified = modifier(query)
-
-    if modified and modified != query:
-        fallback_queries.append(modified)
-
-    # Add basic variations based on attempt
-    if attempt == 0:
-        # First retry: try just the original without fluff
-        cleaned = re.sub(r"[^\w\s]", "", query)  # Remove punctuation
-        fallback_queries.append(cleaned)
-    elif attempt == 1:
-        # Second retry: try extracting main topic (first 2-3 words as topic)
-        words = query.split()
-        if len(words) > 2:
-            fallback_queries.append(" ".join(words[:3]))
-
-    # Always return list (may be empty if all attempts failed)
-    return fallback_queries[:3]  # Max 3 variations
 
 
 def _check_ambiguity(query: str) -> bool:
@@ -208,9 +166,8 @@ class SearchContext:
     sources_used: list[str] = field(default_factory=list)
     error: str | None = None
 
-    # Validation & retry tracking
+    # Validation
     validation_result: str | None = None  # OK | INSUFFICIENT | AMBIGUOUS
-    retry_count: int = 0
     total_text_length: int = 0
     keywords_found: list[str] = field(default_factory=list)
 

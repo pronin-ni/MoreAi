@@ -366,52 +366,6 @@ class PipelineExecutor:
                         stage_id=stage_def.stage_id,
                         amount=result.retry_count,
                     )
-
-                # Grounding retry logic: if grounding failed and we have retries left, retry with different model
-                max_grounding_retries = 2
-                adaptive_retry_threshold = 0.45
-
-                if (
-                    ctx.trace.pipeline_id == "search-answer"
-                    and result.success
-                    and ctx.metadata.get("grounding_failed", False)
-                ):
-                    chunking_stats = ctx.metadata.get("search_context", {}).get(
-                        "chunking_stats", {}
-                    )
-                    avg_score = chunking_stats.get("average_chunk_score", 1.0)
-                    max_retries = (
-                        3 if avg_score < adaptive_retry_threshold else max_grounding_retries
-                    )
-
-                    if attempt < max_retries:
-                        logger.info(
-                            "grounding_retry_triggered",
-                            stage_id=stage_def.stage_id,
-                            attempt=attempt + 1,
-                            max_retries=max_retries,
-                            avg_chunk_score=avg_score,
-                            grounding_pattern=ctx.metadata.get("grounding_pattern"),
-                        )
-                        continue
-
-                    logger.warning(
-                        "grounding_retry_exhausted",
-                        stage_id=stage_def.stage_id,
-                        attempts=attempt + 1,
-                        max_retries=max_retries,
-                        grounding_pattern=ctx.metadata.get("grounding_pattern"),
-                    )
-
-                    # Retry escalation: fallback to full-page context
-                    ctx.metadata["chunking_fallback"] = True
-                    ctx.metadata["fallback_reason"] = "retry_exhausted"
-                    logger.warning(
-                        "retry_escalation_fallback",
-                        attempts=attempt + 1,
-                        fallback_triggered=True,
-                    )
-
                 return result
 
             except Exception as exc:
@@ -516,7 +470,6 @@ class PipelineExecutor:
             # Get validation results from search
             search_context_meta = ctx.metadata.get("search_context", {})
             validation_result = search_context_meta.get("validation_result")
-            retry_count = search_context_meta.get("retry_count", 0)
             content_pages = search_context_meta.get("filtered_pages", 0)
             total_text_length = search_context_meta.get("total_text_length", 0)
 
@@ -540,7 +493,7 @@ class PipelineExecutor:
                 search_content=search_content,
                 search_skipped=search_skipped,
                 validation_result=validation_result,
-                retry_count=retry_count,
+                retry_count=0,
                 content_pages=content_pages,
                 total_text_length=total_text_length,
                 chunk_context=chunk_context,
@@ -1600,7 +1553,6 @@ async def _search_pipeline_prepare(
             "total_text_length": search_context.total_text_length,
             "keywords_found": search_context.keywords_found,
             "validation_result": search_context.validation_result,
-            "retry_count": search_context.retry_count,
             "sources": list(search_context.fetched_contents.keys()),
             "filtered_sources": [p.url for p in search_context.filtered_contents],
             "filtering_stats": search_context.filtering_stats,
@@ -1625,15 +1577,23 @@ async def _search_pipeline_prepare(
         ctx.metadata["search_validation"] = search_context.validation_result
 
         # FAIL-FAST: If insufficient search context, skip synthesis
-        if len(search_context.fetched_contents) < 2 or search_context.total_text_length < 1500:
+        content_pages = len(search_context.fetched_contents)
+        total_text = search_context.total_text_length
+        context_valid = content_pages >= 2 and total_text >= 1500
+
+        if not context_valid:
             ctx.metadata["search_skipped"] = True
             ctx.metadata["search_error"] = "insufficient_search_context"
             ctx.metadata["chunking_fallback"] = True
             ctx.metadata["fallback_reason"] = "insufficient_search_context"
+            ctx.metadata["fallback_response"] = (
+                "Не удалось получить достаточную информацию из поиска. Попробуйте позже."
+            )
             logger.warning(
                 "search_context_insufficient",
-                pages=len(search_context.fetched_contents),
-                text_length=search_context.total_text_length,
+                pages=content_pages,
+                text_length=total_text,
+                context_valid=False,
             )
             return
 
@@ -1701,11 +1661,10 @@ async def _search_pipeline_prepare(
             request_id=request_id,
             query=user_query[:50],
             results=len(search_context.search_results),
-            content_pages=len(search_context.fetched_contents),
-            filtered_pages=len(search_context.filtered_contents),
-            text_length=search_context.total_text_length,
+            fetched_pages_count=content_pages,
+            total_text_length=total_text,
+            context_valid=context_valid,
             validation_result=search_context.validation_result,
-            retry_count=search_context.retry_count,
             filtering_stats=search_context.filtering_stats,
             error=search_context.error,
         )
