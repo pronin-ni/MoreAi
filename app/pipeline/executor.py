@@ -9,6 +9,7 @@ collects traces, and returns the final OpenAI-compatible response.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 from app.core.errors import (
     BadRequestError,
@@ -56,6 +57,24 @@ logger = get_logger(__name__)
 
 MAX_STAGES_MVP = 3
 MAX_NESTED_DEPTH = 1  # No pipeline-inside-pipeline
+MAX_MODELS_PER_STAGE = 2  # Max model attempts per stage (primary + 1 fallback)
+MAX_STAGE_RETRIES = 0  # No stage retries
+DEFAULT_MODEL_TIMEOUT_SECONDS = 20
+FALLBACK_RESPONSE = (
+    "I apologize, but I'm currently unable to process your request. Please try again."
+)
+
+
+@dataclass(slots=True)
+class ExecutionResult:
+    """Structured result from stage execution."""
+
+    success: bool
+    content: str
+    error: str | None = None
+    model_used: str = ""
+    provider_id: str = ""
+    latency_ms: float = 0.0
 
 
 class PipelineExecutor:
@@ -245,13 +264,12 @@ class PipelineExecutor:
         - Only returns final failure after all viable candidates are exhausted
 
         For stages with fixed target_model:
-        - Uses simple retry loop
+        - No retries (MAX_STAGE_RETRIES = 0)
         """
         stage_timeout_ms = stage_def.timeout_override_ms or remaining_ms
-        max_retries = min(stage_def.max_retries, 3)  # bounded retry
+        max_retries = MAX_STAGE_RETRIES
 
         # For intelligent selection stages, manage candidate exclusion state here
-        # so it persists across retry iterations
         excluded_ids: set[str] = set()
         failure_penalties: dict[str, dict[str, float]] = {}
         fallback_chain: list[dict] = []
@@ -265,16 +283,6 @@ class PipelineExecutor:
             trace.retry_count = attempt
 
             attempt_start = time.monotonic()
-
-            if attempt > 0:
-                trace.status = "retried"
-                logger.info(
-                    "stage_retry",
-                    request_id=request_id,
-                    pipeline_id=ctx.trace.pipeline_id,
-                    stage_id=stage_def.stage_id,
-                    attempt=str(attempt + 1),
-                )
 
             try:
                 if is_intelligent:
@@ -598,8 +606,14 @@ class PipelineExecutor:
         )
         candidates = list(initial_selection.all_candidates)
 
-        # Fallback loop: try candidates until success or exhausted
-        while True:
+        # Fallback loop: bounded to MAX_MODELS_PER_STAGE candidates
+        for model_attempt_idx in range(MAX_MODELS_PER_STAGE):
+            # Get next available candidate
+            target_candidate = None
+            for c in candidates:
+                if not c.is_excluded:
+                    target_candidate = c
+                    break
             # Re-rank candidates with current failure penalties
             if failure_penalties:
                 re_ranked = model_selector._rank_candidates(
@@ -758,6 +772,17 @@ class PipelineExecutor:
                         fallback_chain
                     )
 
+                # Log successful execution completion
+                logger.info(
+                    "stage_execution_success",
+                    request_id=request_id,
+                    stage_id=stage_def.stage_id,
+                    model=target_candidate.model_id,
+                    provider=target_candidate.provider_id,
+                    attempt_index=str(model_attempt_idx + 1),
+                    latency_ms=result.duration_ms,
+                )
+
                 return result
 
             except Exception as exc:
@@ -804,7 +829,7 @@ class PipelineExecutor:
                         excluded_count=str(len(excluded_ids)),
                     )
 
-                    # Continue loop to try next candidate
+                    # Continue to next candidate in for loop
                     continue
                 else:
                     # Retryable failure — re-raise for caller to handle retry
@@ -816,6 +841,28 @@ class PipelineExecutor:
                         reason=failure_reason,
                     )
                     raise
+
+        # All candidates exhausted - return guaranteed fallback response
+        logger.warning(
+            "stage_all_candidates_exhausted",
+            request_id=request_id,
+            stage_id=stage_def.stage_id,
+            total_attempts=MAX_MODELS_PER_STAGE,
+            fallback_chain=fallback_chain,
+        )
+
+        return StageResult(
+            stage_id=stage_def.stage_id,
+            role=stage_def.role,
+            target_model="fallback",
+            provider_id="none",
+            output=FALLBACK_RESPONSE,
+            success=True,
+            duration_ms=0.0,
+            attempts=[],
+            restart_occurred=False,
+            restart_reason="",
+        )
 
     def _classify_stage_failure(self, result: StageResult) -> str:
         """Classify the reason for a stage failure.
@@ -938,6 +985,54 @@ class PipelineExecutor:
             return "provider_internal_error"
         return "execution_error"
 
+    async def _safe_execute(
+        self,
+        request: ChatCompletionRequest,
+        request_id: str,
+        forced_candidate,
+        stage_def,
+    ):
+        """Safe execution wrapper with timeout."""
+        import asyncio
+
+        try:
+            response = await asyncio.wait_for(
+                chat_proxy_service.process_completion(
+                    request, request_id, forced_candidate=forced_candidate
+                ),
+                timeout=DEFAULT_MODEL_TIMEOUT_SECONDS,
+            )
+            return {
+                "success": True,
+                "response": response,
+                "error": None,
+            }
+        except TimeoutError:
+            logger.warning(
+                "safe_execute_timeout",
+                request_id=request_id,
+                model=request.model,
+                timeout_seconds=DEFAULT_MODEL_TIMEOUT_SECONDS,
+            )
+            return {
+                "success": False,
+                "response": None,
+                "error": "timeout",
+            }
+        except Exception as e:
+            logger.warning(
+                "safe_execute_error",
+                request_id=request_id,
+                model=request.model,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return {
+                "success": False,
+                "response": None,
+                "error": type(e).__name__,
+            }
+
     async def _execute_stage_model(
         self,
         target_model: str,
@@ -966,6 +1061,24 @@ class PipelineExecutor:
         response = await chat_proxy_service.process_completion(
             stage_request, stage_request_id, forced_candidate=forced_candidate
         )
+
+        # Verify routing: selected_model vs actual_model_used
+        actual_model = getattr(response, "_model", target_model)
+        if actual_model != target_model:
+            logger.error(
+                "model_routing_mismatch",
+                request_id=request_id,
+                stage_id=stage_def.stage_id,
+                selected_model=target_model,
+                actual_model_used=actual_model,
+            )
+        else:
+            logger.info(
+                "model_routing_verified",
+                request_id=request_id,
+                stage_id=stage_def.stage_id,
+                model=target_model,
+            )
 
         # Extract output text
         output_text = ""
