@@ -63,6 +63,54 @@ DEFAULT_MODEL_TIMEOUT_SECONDS = 20
 FALLBACK_RESPONSE = (
     "I apologize, but I'm currently unable to process your request. Please try again."
 )
+MIN_RESPONSE_LENGTH = 20  # Minimum valid response length
+FAIL_PHRASES = [
+    "уточните",
+    "не могу",
+    "недостаточно информации",
+    "cannot",
+    "unable",
+    "provide",
+]  # Generic failure phrases
+SEARCH_MIN_PAGES = 2  # Minimum content pages for search pipeline
+SEARCH_MIN_TEXT_LENGTH = 1500  # Minimum text length for search pipeline
+
+
+def _is_valid_response(content: str) -> bool:
+    """Validate if response is meaningful (not empty or generic failure)."""
+    if not content or len(content.strip()) < MIN_RESPONSE_LENGTH:
+        return False
+    content_lower = content.lower()
+    for phrase in FAIL_PHRASES:
+        if phrase.lower() in content_lower:
+            return False
+    return True
+
+
+def _check_search_conditions(content_pages: int, text_length: int) -> bool:
+    """Check if search pipeline should be used based on content conditions."""
+    return content_pages >= SEARCH_MIN_PAGES or text_length >= SEARCH_MIN_TEXT_LENGTH
+
+
+# Track failed providers per request for fail-fast
+_failed_providers: dict[str, set[str]] = {}
+
+
+def _mark_provider_failed(request_id: str, provider_id: str) -> None:
+    """Mark a provider as failed for this request."""
+    if request_id not in _failed_providers:
+        _failed_providers[request_id] = set()
+    _failed_providers[request_id].add(provider_id)
+
+
+def _is_provider_failed(request_id: str, provider_id: str) -> bool:
+    """Check if provider has failed for this request."""
+    return provider_id in _failed_providers.get(request_id, set())
+
+
+def _clear_failed_providers(request_id: str) -> None:
+    """Clear failed providers tracking for request."""
+    _failed_providers.pop(request_id, None)
 
 
 @dataclass(slots=True)
@@ -670,25 +718,46 @@ class PipelineExecutor:
                     stage_id=stage_def.stage_id,
                     excluded=str(excluded_ids),
                 )
-                raise ServiceUnavailableError(
-                    f"No viable candidates for stage '{stage_def.stage_id}' "
-                    f"after {' + '.join(excluded_ids)} failed",
-                    details={"stage_id": stage_def.stage_id, "excluded": list(excluded_ids)},
+                # No viable candidates - return fallback instead of raising
+                logger.warning(
+                    "stage_no_viable_candidates",
+                    request_id=request_id,
+                    stage_id=stage_def.stage_id,
+                    excluded=str(excluded_ids),
+                )
+                return StageResult(
+                    stage_id=stage_def.stage_id,
+                    role=stage_def.role,
+                    target_model="fallback",
+                    provider_id="none",
+                    output=FALLBACK_RESPONSE,
+                    success=True,
+                    duration_ms=0.0,
+                    attempts=[],
+                    restart_occurred=False,
+                    restart_reason="",
                 )
 
-            # Check fallback attempts limit
+            # Check fallback attempts limit - return fallback instead of raising
             fallback_count = len(fallback_chain)
-            if fallback_count > policy.max_fallback_attempts:
+            if fallback_count >= MAX_MODELS_PER_STAGE:
                 logger.warning(
                     "stage_fallback_attempts_exhausted",
                     request_id=request_id,
                     stage_id=stage_def.stage_id,
                     attempts=str(fallback_count),
                 )
-                raise ServiceUnavailableError(
-                    f"Stage '{stage_def.stage_id}' exceeded max fallback attempts "
-                    f"({policy.max_fallback_attempts})",
-                    details={"stage_id": stage_def.stage_id, "attempts": fallback_count},
+                return StageResult(
+                    stage_id=stage_def.stage_id,
+                    role=stage_def.role,
+                    target_model="fallback",
+                    provider_id="none",
+                    output=FALLBACK_RESPONSE,
+                    success=True,
+                    duration_ms=0.0,
+                    attempts=[],
+                    restart_occurred=False,
+                    restart_reason="",
                 )
 
             # Record selection trace in context metadata (not in StageTrace which doesn't have these fields)
@@ -783,6 +852,22 @@ class PipelineExecutor:
                     latency_ms=result.duration_ms,
                 )
 
+                # Record success in bandit
+                try:
+                    from app.intelligence.bandit import bandit_model
+
+                    quality_score = (
+                        result.quality_score if hasattr(result, "quality_score") else 0.5
+                    )
+                    bandit_model.record_success(
+                        model_id=target_candidate.model_id,
+                        provider_id=target_candidate.provider_id,
+                        latency_ms=result.duration_ms,
+                        quality_score=quality_score,
+                    )
+                except Exception:
+                    pass
+
                 return result
 
             except Exception as exc:
@@ -805,6 +890,18 @@ class PipelineExecutor:
                             target_candidate.model_id,
                             reason=failure_reason,
                             penalty=sum(failure_penalties[target_candidate.model_id].values()),
+                        )
+                    except Exception:
+                        pass
+
+                    # Record failure in bandit
+                    try:
+                        from app.intelligence.bandit import bandit_model
+
+                        bandit_model.record_failure(
+                            model_id=target_candidate.model_id,
+                            provider_id=target_candidate.provider_id,
+                            reason=failure_reason,
                         )
                     except Exception:
                         pass
@@ -1084,6 +1181,34 @@ class PipelineExecutor:
         output_text = ""
         if response.choices:
             output_text = response.choices[0].message.content
+
+        # Validate response - if invalid, mark provider failed
+        provider_id = getattr(response, "_provider", "")
+        if not _is_valid_response(output_text):
+            logger.warning(
+                "stage_invalid_response",
+                request_id=request_id,
+                stage_id=stage_def.stage_id,
+                model=target_model,
+                provider=provider_id,
+                response_length=len(output_text) if output_text else 0,
+            )
+            _mark_provider_failed(request_id, provider_id)
+            # Return failure result to trigger fallback
+            result = StageResult(
+                stage_id=stage_def.stage_id,
+                role=stage_def.role,
+                target_model=target_model,
+                provider_id=provider_id,
+                output=FALLBACK_RESPONSE,
+                success=False,
+                duration_ms=(time.monotonic() - stage_start) * 1000,
+                attempts=[],
+                restart_occurred=False,
+                restart_reason="invalid_response",
+            )
+            ctx.stage_outputs[stage_def.stage_id] = result
+            return result
 
         duration_ms = (time.monotonic() - stage_start) * 1000
 
@@ -1698,6 +1823,20 @@ async def _search_pipeline_prepare(
             "filtering_stats": search_context.filtering_stats,
             "error": search_context.error,
         }
+
+        # Check search conditions - fallback to LLM if insufficient content
+        content_pages = len(search_context.filtered_contents)
+        text_length = search_context.total_text_length
+        if not _check_search_conditions(content_pages, text_length):
+            logger.warning(
+                "search_insufficient_content_fallback",
+                request_id=request_id,
+                content_pages=content_pages,
+                text_length=text_length,
+            )
+            ctx.metadata["search_skipped"] = True
+            ctx.metadata["search_fallback_reason"] = "insufficient_content"
+            return
 
         # Store FILTERED content for prompt building (quality-controlled)
         if search_context.filtered_contents:

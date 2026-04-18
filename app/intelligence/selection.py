@@ -490,6 +490,22 @@ class ModelSelector:
             ranking.latency_score = stats.latency_score
             ranking.stability_score = stats.stability_score
 
+            # Add bandit dynamic score
+            try:
+                from app.intelligence.bandit import bandit_model
+
+                bandit_score = bandit_model.compute_bandit_score(model_id, provider_id)
+                ranking.final_score = ranking.final_score * 0.7 + bandit_score * 0.3
+                logger.info(
+                    "bandit_score_integrated",
+                    model=model_id,
+                    provider=provider_id,
+                    bandit_score=bandit_score,
+                    combined=ranking.final_score,
+                )
+            except Exception:
+                pass
+
             # Stage suitability with scoring breakdown (uses role-aware pre-fetched staleness data)
             model_penalties = failure_penalties.get(model_id)
             staleness_data = staleness_map.get((model_id, role))
