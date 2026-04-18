@@ -8,6 +8,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Import filtering types (lazy import to avoid circular deps)
+# FilteredPage and FilteringStats are defined in filtering.py
+
 # Constants for validation thresholds
 MIN_CONTENT_PAGES = 3
 MIN_TOTAL_TEXT_LENGTH = 2000
@@ -82,10 +85,7 @@ def _check_ambiguity(query: str) -> bool:
             return True
 
     # Check for very short queries that might be ambiguous
-    if len(query.split()) < 3:
-        return True
-
-    return False
+    return len(query.split()) < 3
 
 
 def validate_context(
@@ -104,7 +104,6 @@ def validate_context(
         Tuple of (validation_result, details, keywords_found)
     """
     # Count metrics
-    result_count = len(search_results)
     content_pages = len(fetched_contents)
     total_text_length = sum(len(c) for c in fetched_contents.values())
 
@@ -200,7 +199,10 @@ class SearchContext:
     original_query: str
     expanded_queries: list[str] = field(default_factory=list)
     search_results: list[SearchResult] = field(default_factory=list)
-    fetched_contents: dict[str, str] = field(default_factory=dict)  # url -> content
+    fetched_contents: dict[str, str] = field(default_factory=dict)  # url -> content (raw)
+
+    # NEW: Filtered contents for LLM (quality-controlled)
+    filtered_contents: list[Any] = field(default_factory=list)  # list[FilteredPage]
 
     # Metadata
     sources_used: list[str] = field(default_factory=list)
@@ -211,6 +213,9 @@ class SearchContext:
     retry_count: int = 0
     total_text_length: int = 0
     keywords_found: list[str] = field(default_factory=list)
+
+    # Filtering stats
+    filtering_stats: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

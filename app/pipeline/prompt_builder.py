@@ -9,6 +9,24 @@ from __future__ import annotations
 
 from app.pipeline.types import InputMapping, PipelineContext, StageRole
 
+# Grounding configuration
+SEARCH_CONTEXT_CHARS_PER_PAGE = 2500  # Increased from 1000 for better grounding
+SEARCH_MAX_PAGES = 3  # Top 3 pages only
+GROUNDING_FAILURE_PATTERNS = [
+    "не могу",
+    "уточните",
+    "неизвестно",
+    "нет информации",
+    "недостаточно",
+    "no information",
+    "cannot find",
+    "don't know",
+    "unable to",
+    "no data",
+    "no answer",
+    "not enough",
+]
+
 
 def _extract_stage_output(context: PipelineContext, stage_id: str) -> str:
     """Get a named stage output from context for template variable substitution."""
@@ -164,17 +182,27 @@ def _build_search_default_prompt(
     search_skipped: bool,
     validation_result: str | None = None,
     search_retry_count: int = 0,
+    content_pages: int = 0,
+    total_text_length: int = 0,
 ) -> str:
-    """Build default prompt for synthesize stage (Perplexity-style).
+    """Build STRICT GROUNDED prompt for synthesize stage.
+
+    Forces model to use provided context - no generic answers.
+    Increased context per page for better grounding.
 
     Args:
         original_request: User's original query
         search_results: List of search result dicts
         search_content: Dict of url -> extracted content
         search_skipped: Whether search was skipped
-        validation_result: Validation result from validate_context (OK | INSUFFICIENT | AMBIGUOUS)
-        search_retry_count: Number of search retries attempted
+        validation_result: Validation result from validate_context
+        search_retry_count: Number of search retries
+        content_pages: Number of pages with content (for grounding override)
+        total_text_length: Total char length of all content
     """
+    # Context presence override - if we have good context, force grounded mode
+    has_sufficient_context = content_pages >= 2 and total_text_length >= 2000
+
     if search_skipped:
         return f"""Answer the question. Use your knowledge.
 
@@ -183,35 +211,29 @@ Question: {original_request}
 IMPORTANT:
 - Provide the FINAL ANSWER only
 - No meta-analysis or evaluation text
-- No phrases like "I cannot evaluate" or "no answer"
 """
 
-    # Handle insufficient context case
     if validation_result == "INSUFFICIENT":
-        return f"""Search returned insufficient data. Answer from your knowledge and be brief.
+        return f"""Search found limited information. Answer from your knowledge.
 
 Question: {original_request}
 
 IMPORTANT:
-- Web search found limited information
-- Answer based ONLY on what you confidently know
-- If unsure, state uncertainty briefly
-- NO meta-analysis or evaluation text
-"""
-
-    # Handle ambiguous query case
-    if validation_result == "AMBIGUOUS":
-        return f"""Answer the question. Clarify if needed.
-
-Question: {original_request}
-
-IMPORTANT:
-- If query is ambiguous, provide most relevant answer
-- Note any assumptions made
+- Answer based on available information
+- If uncertain, state briefly
 - NO meta-analysis
 """
 
-    # Normal case - OK validation
+    if validation_result == "AMBIGUOUS":
+        return f"""Answer based on provided sources.
+
+Question: {original_request}
+
+IMPORTANT:
+- Use the sources below
+- Note assumptions made
+"""
+
     if not search_results:
         return f"""Answer the question. No web results found.
 
@@ -220,42 +242,81 @@ Question: {original_request}
 IMPORTANT:
 - Answer from your knowledge
 - Provide the FINAL ANSWER only
-- No meta-analysis
 """
 
-    # Build Perplexity-style prompt with numbered sources
+    # STRICT GROUNDED prompt - forces context usage
+    if has_sufficient_context:
+        return _build_strict_grounded_prompt(
+            original_request,
+            search_results,
+            search_content,
+        )
+
+    # Fallback for insufficient context
+    return _build_strict_grounded_prompt(
+        original_request,
+        search_results,
+        search_content,
+    )
+
+
+def _build_strict_grounded_prompt(
+    original_request: str,
+    search_results: list,
+    search_content: dict,
+) -> str:
+    """Build strict grounded prompt - MUST use context.
+
+    Rules:
+    - If context has relevant info → MUST use it
+    - NO "I don't know" if context exists
+    - NO clarifying questions
+    - NO prior knowledge (only context)
+    """
+    # Build with INCREASED context (2500 chars per page)
     parts = [
-        "Answer using the sources below. cite inline like [1], [2].",
+        "You MUST answer using ONLY the provided context below.",
+        "",
+        "STRICT RULES:",
+        "- If context contains relevant information → you MUST use it",
+        "- Do NOT say 'I don't know' if context has the answer",
+        "- Do NOT ask clarifying questions",
+        "- Do NOT rely on prior knowledge",
+        "- Cite sources as [1], [2], etc.",
+        "- Provide DIRECT answer",
+        "- NO meta-commentary",
+        "",
+        "=== SOURCES ===",
         "",
     ]
 
-    # Add sources with content (numbered [1], [2], etc.)
-    for i, r in enumerate(search_results[:5], start=1):
+    # Add top 3 sources with MORE context (2500 chars)
+    for i, r in enumerate(search_results[:SEARCH_MAX_PAGES], start=1):
         url = r.get("url", "")
         title = r.get("title", "Untitled")
 
         parts.append(f"[{i}] {title}")
-        parts.append(f"    {url}")
+        parts.append(f"URL: {url}")
 
         if url in search_content:
-            content = search_content[url][:1000]
-            parts.append(f"    {content}")
+            # INCREASED from 1000 to 2500 chars
+            content = search_content[url][:SEARCH_CONTEXT_CHARS_PER_PAGE]
+            # Clean content - remove excessive whitespace
+            content_clean = " ".join(content.split())
+            parts.append(f"Content: {content_clean}")
         else:
             snippet = r.get("snippet", "")
             if snippet:
-                parts.append(f"    {snippet[:300]}")
+                parts.append(f"Snippet: {snippet[:500]}")
 
         parts.append("")
 
     parts.extend(
         [
-            f"Question: {original_request}",
+            "=== QUESTION ===",
+            original_request,
             "",
-            "IMPORTANT:",
-            "- Provide the FINAL ANSWER only",
-            "- Cite sources as [1], [2], etc.",
-            "- NO meta-analysis or evaluation text",
-            "- Include sources list at the end",
+            "=== ANSWER ===",
         ]
     )
 

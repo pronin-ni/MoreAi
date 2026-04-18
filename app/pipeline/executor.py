@@ -175,12 +175,21 @@ class PipelineExecutor:
             ctx.trace.completed_at = time.monotonic()
             ctx.trace.total_duration_ms = (ctx.trace.completed_at - ctx.trace.started_at) * 1000
 
+            # Grounding observability for search pipeline
+            grounding_failed = ctx.metadata.get("grounding_failed", False)
+            grounding_pattern = ctx.metadata.get("grounding_pattern")
+            search_ctx = ctx.metadata.get("search_context", {})
+
             logger.info(
                 "pipeline_completed",
                 request_id=request_id,
                 pipeline_id=pipeline_def.pipeline_id,
                 total_duration_ms=str(round(ctx.trace.total_duration_ms, 1)),
                 trace_id=ctx.trace.trace_id,
+                grounding_success=not grounding_failed,
+                grounding_pattern=grounding_pattern,
+                content_pages=search_ctx.get("filtered_pages", 0),
+                total_text_length=search_ctx.get("total_text_length", 0),
             )
 
             # Record in diagnostics and metrics
@@ -357,6 +366,22 @@ class PipelineExecutor:
                         amount=result.retry_count,
                     )
 
+                # Grounding retry logic: if grounding failed and we have retries left, retry with different model
+                if (
+                    ctx.trace.pipeline_id == "search-answer"
+                    and result.success
+                    and ctx.metadata.get("grounding_failed", False)
+                    and attempt < max_retries
+                ):
+                    logger.info(
+                        "grounding_retry_triggered",
+                        stage_id=stage_def.stage_id,
+                        attempt=attempt + 1,
+                        grounding_pattern=ctx.metadata.get("grounding_pattern"),
+                    )
+                    # Continue to next attempt - will select different model
+                    continue
+
                 return result
 
             except Exception as exc:
@@ -462,6 +487,16 @@ class PipelineExecutor:
             search_context_meta = ctx.metadata.get("search_context", {})
             validation_result = search_context_meta.get("validation_result")
             retry_count = search_context_meta.get("retry_count", 0)
+            content_pages = search_context_meta.get("filtered_pages", 0)
+            total_text_length = search_context_meta.get("total_text_length", 0)
+
+            # Log context stats for observability
+            logger.info(
+                "search_prompt_context",
+                content_pages=content_pages,
+                total_text_length=total_text_length,
+                search_results_count=len(search_results),
+            )
 
             stage_prompt = build_search_stage_prompt(
                 stage_id=stage_def.stage_id,
@@ -471,6 +506,8 @@ class PipelineExecutor:
                 search_skipped=search_skipped,
                 validation_result=validation_result,
                 retry_count=retry_count,
+                content_pages=content_pages,
+                total_text_length=total_text_length,
             )
         else:
             stage_prompt = build_stage_prompt(
@@ -963,7 +1000,97 @@ class PipelineExecutor:
         ctx.stage_outputs[stage_def.stage_id] = result
         ctx.metadata[f"stage_provider:{stage_def.stage_id}"] = result.provider_id
 
+        # Grounding failure detection for search-answer pipeline
+        if ctx.trace.pipeline_id == "search-answer" and result.success:
+            grounding_check = self._check_grounding_failure(
+                result.output,
+                ctx.metadata,
+            )
+
+            # Also check if context was actually USED (not just lack of failure patterns)
+            context_used = self._check_context_was_used(
+                result.output,
+                ctx.metadata,
+            )
+
+            if grounding_check["failed"] or not context_used:
+                reason = (
+                    grounding_check["pattern"] if grounding_check["failed"] else "no_context_usage"
+                )
+                logger.warning(
+                    "grounding_failure_detected",
+                    model=result.model_id,
+                    provider=result.provider_id,
+                    pattern_matched=grounding_check["pattern"],
+                    context_used=context_used,
+                    content_pages=ctx.metadata.get("search_context", {}).get("filtered_pages", 0),
+                )
+                ctx.metadata["grounding_failed"] = True
+                ctx.metadata["grounding_pattern"] = reason
+
         return result
+
+    def _check_grounding_failure(self, output: str, metadata: dict) -> dict:
+        """Check if model failed to ground - used generic response instead of context."""
+        from app.pipeline.prompt_builder import GROUNDING_FAILURE_PATTERNS
+
+        # Check if we even had context
+        search_context = metadata.get("search_context", {})
+        content_pages = search_context.get("filtered_pages", 0)
+        total_text = search_context.get("total_text_length", 0)
+
+        # No context = no grounding possible
+        if content_pages < 2 or total_text < 1000:
+            return {"failed": False, "pattern": None}
+
+        # Check output for failure patterns
+        output_lower = output.lower()
+        for pattern in GROUNDING_FAILURE_PATTERNS:
+            if pattern in output_lower:
+                return {"failed": True, "pattern": pattern}
+
+        return {"failed": False, "pattern": None}
+
+    def _check_context_was_used(self, output: str, metadata: dict) -> bool:
+        """Check if output actually uses provided context - checks for source references."""
+        # We provided sources [1], [2], [3] in the prompt
+        # If output contains these references, context was likely used
+        output_lower = output.lower()
+
+        # Check for common citation patterns
+        citation_patterns = [
+            "[1]",
+            "[2]",
+            "[3]",
+            "source:",
+            "according to",
+            "as mentioned",
+            "the article",
+            "the page",
+        ]
+
+        has_citation = any(pattern in output_lower for pattern in citation_patterns)
+
+        # Also check if output mentions any topic from the sources
+        search_context = metadata.get("search_context", {})
+        filtered_sources = search_context.get("filtered_sources", [])
+
+        if filtered_sources and not has_citation:
+            # If no citations and no references, likely didn't use context
+            # But allow short answers (< 50 chars) to pass - might be partial
+            if len(output) < 50:
+                return True  # Short answer - could be valid
+            return False
+
+        return has_citation or len(output) > 50
+
+        # Check output for failure patterns
+        output_lower = output.lower()
+        for pattern in GROUNDING_FAILURE_PATTERNS:
+            if pattern in output_lower:
+                return {"failed": True, "pattern": pattern}
+
+        return {"failed": False, "pattern": None}
 
     def _build_stage_messages(
         self,
@@ -1335,16 +1462,26 @@ async def _search_pipeline_prepare(
             "expanded_queries": search_context.expanded_queries,
             "result_count": len(search_context.search_results),
             "content_pages": len(search_context.fetched_contents),
+            "filtered_pages": len(search_context.filtered_contents),
             "total_text_length": search_context.total_text_length,
             "keywords_found": search_context.keywords_found,
             "validation_result": search_context.validation_result,
             "retry_count": search_context.retry_count,
             "sources": list(search_context.fetched_contents.keys()),
+            "filtered_sources": [p.url for p in search_context.filtered_contents],
+            "filtering_stats": search_context.filtering_stats,
             "error": search_context.error,
         }
 
-        # Store fetched content for prompt building
-        ctx.metadata["search_content"] = search_context.fetched_contents
+        # Store FILTERED content for prompt building (quality-controlled)
+        if search_context.filtered_contents:
+            ctx.metadata["search_content"] = {
+                p.url: p.content for p in search_context.filtered_contents
+            }
+        else:
+            # Fallback to raw content if filtering failed
+            ctx.metadata["search_content"] = search_context.fetched_contents
+
         ctx.metadata["search_results"] = [
             {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
             for r in search_context.search_results
@@ -1360,9 +1497,11 @@ async def _search_pipeline_prepare(
             query=user_query[:50],
             results=len(search_context.search_results),
             content_pages=len(search_context.fetched_contents),
+            filtered_pages=len(search_context.filtered_contents),
             text_length=search_context.total_text_length,
             validation_result=search_context.validation_result,
             retry_count=search_context.retry_count,
+            filtering_stats=search_context.filtering_stats,
             error=search_context.error,
         )
 

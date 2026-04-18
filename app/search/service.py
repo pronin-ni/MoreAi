@@ -1,4 +1,4 @@
-"""Search service with query expansion, validation and retry logic."""
+"""Search service with query expansion, validation, retry logic, and pre-synthesis filtering."""
 
 from __future__ import annotations
 
@@ -8,10 +8,12 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.search.cache import page_cache, search_cache
 from app.search.fetcher import content_fetcher
+from app.search.filtering import (
+    apply_fallback,
+    filter_pages,
+)
 from app.search.models import (
     MAX_RETRIES,
-    MIN_CONTENT_PAGES,
-    MIN_TOTAL_TEXT_LENGTH,
     SearchContext,
     SearchResult,
     _generate_fallback_queries,
@@ -142,6 +144,40 @@ class SearchService:
             # Step 4: Fetch content if requested
             if fetch_content and unique_results:
                 await self._fetch_contents(context, unique_results)
+
+                # Step 5: Pre-synthesis filtering
+                filtered_pages, filtering_stats = filter_pages(
+                    current_query,
+                    unique_results,
+                    context.fetched_contents,
+                )
+
+                # Apply fallback if filtering removed everything
+                if not filtered_pages:
+                    filtered_pages = apply_fallback(
+                        filtered_pages,
+                        context.fetched_contents,
+                        unique_results,
+                    )
+                    filtering_stats.fallback_used = True
+
+                context.filtered_contents = filtered_pages
+                context.filtering_stats = {
+                    "total_fetched": filtering_stats.total_fetched,
+                    "seo_filtered": filtering_stats.seo_filtered,
+                    "duplicates_removed": filtering_stats.duplicates_removed,
+                    "final_count": filtering_stats.final_count,
+                    "fallback_used": filtering_stats.fallback_used,
+                }
+
+                logger.info(
+                    "filtering_applied",
+                    total_fetched=filtering_stats.total_fetched,
+                    seo_filtered=filtering_stats.seo_filtered,
+                    duplicates_removed=filtering_stats.duplicates_removed,
+                    final_count=filtering_stats.final_count,
+                    fallback_used=filtering_stats.fallback_used,
+                )
 
             # Calculate metrics
             context.total_text_length = sum(len(c) for c in context.fetched_contents.values())
