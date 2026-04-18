@@ -36,6 +36,7 @@ from app.pipeline.types import (
     PipelineRegistry,
     PipelineTrace,
     StageResult,
+    StageRole,
     StageTrace,
     pipeline_registry,
 )
@@ -367,20 +368,49 @@ class PipelineExecutor:
                     )
 
                 # Grounding retry logic: if grounding failed and we have retries left, retry with different model
+                max_grounding_retries = 2
+                adaptive_retry_threshold = 0.45
+
                 if (
                     ctx.trace.pipeline_id == "search-answer"
                     and result.success
                     and ctx.metadata.get("grounding_failed", False)
-                    and attempt < max_retries
                 ):
-                    logger.info(
-                        "grounding_retry_triggered",
+                    chunking_stats = ctx.metadata.get("search_context", {}).get(
+                        "chunking_stats", {}
+                    )
+                    avg_score = chunking_stats.get("average_chunk_score", 1.0)
+                    max_retries = (
+                        3 if avg_score < adaptive_retry_threshold else max_grounding_retries
+                    )
+
+                    if attempt < max_retries:
+                        logger.info(
+                            "grounding_retry_triggered",
+                            stage_id=stage_def.stage_id,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                            avg_chunk_score=avg_score,
+                            grounding_pattern=ctx.metadata.get("grounding_pattern"),
+                        )
+                        continue
+
+                    logger.warning(
+                        "grounding_retry_exhausted",
                         stage_id=stage_def.stage_id,
-                        attempt=attempt + 1,
+                        attempts=attempt + 1,
+                        max_retries=max_retries,
                         grounding_pattern=ctx.metadata.get("grounding_pattern"),
                     )
-                    # Continue to next attempt - will select different model
-                    continue
+
+                    # Retry escalation: fallback to full-page context
+                    ctx.metadata["chunking_fallback"] = True
+                    ctx.metadata["fallback_reason"] = "retry_exhausted"
+                    logger.warning(
+                        "retry_escalation_fallback",
+                        attempts=attempt + 1,
+                        fallback_triggered=True,
+                    )
 
                 return result
 
@@ -490,12 +520,17 @@ class PipelineExecutor:
             content_pages = search_context_meta.get("filtered_pages", 0)
             total_text_length = search_context_meta.get("total_text_length", 0)
 
-            # Log context stats for observability
+            # NEW: Get chunk context for prompt builder
+            chunk_context = ctx.metadata.get("chunk_context")
+            chunking_enabled = ctx.metadata.get("chunking_enabled", False)
+
             logger.info(
                 "search_prompt_context",
                 content_pages=content_pages,
                 total_text_length=total_text_length,
                 search_results_count=len(search_results),
+                chunking_enabled=chunking_enabled,
+                has_chunk_context=bool(chunk_context),
             )
 
             stage_prompt = build_search_stage_prompt(
@@ -508,6 +543,7 @@ class PipelineExecutor:
                 retry_count=retry_count,
                 content_pages=content_pages,
                 total_text_length=total_text_length,
+                chunk_context=chunk_context,
             )
         else:
             stage_prompt = build_stage_prompt(
@@ -1007,49 +1043,155 @@ class PipelineExecutor:
                 ctx.metadata,
             )
 
-            # Also check if context was actually USED (not just lack of failure patterns)
             context_used = self._check_context_was_used(
                 result.output,
                 ctx.metadata,
             )
 
-            if grounding_check["failed"] or not context_used:
+            keyword_ratio = grounding_check.get(
+                "keyword_ratio", grounding_check.get("grounding_ratio", 0.0)
+            )
+            entity_ratio = grounding_check.get("entity_ratio", 0.0)
+
+            answer_relevance = self._check_answer_relevance(
+                result.output, ctx.original_user_input, ctx.metadata
+            )
+
+            query_coverage = answer_relevance.get("query_coverage", 0.0)
+            chunking_stats = ctx.metadata.get("search_context", {}).get("chunking_stats", {})
+            avg_chunk_score = chunking_stats.get("average_chunk_score", 0.5)
+
+            from app.search.chunker import compute_confidence_score
+
+            confidence = compute_confidence_score(
+                keyword_ratio,
+                query_coverage,
+                avg_chunk_score,
+            )
+
+            early_exit_threshold = 0.75
+            should_retry = (
+                grounding_check["failed"] or not context_used or answer_relevance["failed"]
+            )
+
+            early_exit = not should_retry and confidence > early_exit_threshold
+
+            if should_retry:
                 reason = (
-                    grounding_check["pattern"] if grounding_check["failed"] else "no_context_usage"
+                    grounding_check["pattern"]
+                    if grounding_check["failed"]
+                    else (
+                        "no_context_usage"
+                        if not context_used
+                        else answer_relevance.get("pattern", "unknown")
+                    )
                 )
                 logger.warning(
                     "grounding_failure_detected",
                     model=result.model_id,
                     provider=result.provider_id,
-                    pattern_matched=grounding_check["pattern"],
+                    pattern_matched=reason,
                     context_used=context_used,
+                    keyword_ratio=keyword_ratio,
+                    entity_ratio=entity_ratio,
+                    answer_relevant=not answer_relevance.get("failed", False),
+                    query_coverage=query_coverage,
+                    confidence_score=confidence,
+                    retry_reason=reason,
                     content_pages=ctx.metadata.get("search_context", {}).get("filtered_pages", 0),
+                    chunking_enabled=ctx.metadata.get("chunking_enabled", False),
                 )
                 ctx.metadata["grounding_failed"] = True
                 ctx.metadata["grounding_pattern"] = reason
 
+                try:
+                    from app.pipeline.observability.penalty_cache import global_penalty_cache
+
+                    global_penalty_cache.record_failure(
+                        model_id=result.model_id,
+                        provider_id=result.provider_id,
+                        failure_type="grounding_failure",
+                        penalty={"grounding_penalty": 0.15},
+                    )
+                except Exception:
+                    pass
+            else:
+                if early_exit:
+                    logger.info(
+                        "early_exit_high_confidence",
+                        model=result.model_id,
+                        provider=result.provider_id,
+                        confidence_score=confidence,
+                        keyword_ratio=keyword_ratio,
+                        query_coverage=query_coverage,
+                    )
+                logger.info(
+                    "grounding_success",
+                    model=result.model_id,
+                    provider=result.provider_id,
+                    keyword_ratio=keyword_ratio,
+                    entity_ratio=entity_ratio,
+                    context_used=context_used,
+                    confidence_score=confidence,
+                    early_exit=early_exit,
+                )
+
         return result
 
     def _check_grounding_failure(self, output: str, metadata: dict) -> dict:
-        """Check if model failed to ground - used generic response instead of context."""
-        from app.pipeline.prompt_builder import GROUNDING_FAILURE_PATTERNS
+        """Check if model failed to ground - used generic response instead of context.
 
-        # Check if we even had context
+        Enhanced to use chunk-specific validation with keyword + entity overlap.
+        """
+        from app.pipeline.prompt_builder import GROUNDING_FAILURE_PATTERNS
+        from app.search.chunker import validate_chunk_grounding
+
+        selected_chunks_data = metadata.get("selected_chunks_data", [])
+        if selected_chunks_data:
+            chunk_validation = validate_chunk_grounding(output, selected_chunks_data)
+            if chunk_validation["failed"]:
+                return {
+                    "failed": True,
+                    "pattern": chunk_validation["pattern"],
+                    "keyword_ratio": chunk_validation.get("keyword_ratio", 0.0),
+                    "entity_ratio": chunk_validation.get("entity_ratio", 0.0),
+                }
+
         search_context = metadata.get("search_context", {})
         content_pages = search_context.get("filtered_pages", 0)
         total_text = search_context.get("total_text_length", 0)
 
-        # No context = no grounding possible
         if content_pages < 2 or total_text < 1000:
             return {"failed": False, "pattern": None}
 
-        # Check output for failure patterns
         output_lower = output.lower()
         for pattern in GROUNDING_FAILURE_PATTERNS:
             if pattern in output_lower:
                 return {"failed": True, "pattern": pattern}
 
         return {"failed": False, "pattern": None}
+
+    def _check_answer_relevance(self, output: str, query: str, metadata: dict) -> dict:
+        """Check if answer is relevant to the original query.
+
+        Validates answer contains key query terms and is not too short/generic.
+        """
+        from app.search.chunker import validate_answer_relevance
+
+        if not output or not query:
+            return {"failed": False, "pattern": None}
+
+        result = validate_answer_relevance(output, query)
+
+        if result["failed"]:
+            logger.warning(
+                "answer_relevance_failed",
+                pattern=result.get("pattern"),
+                query_coverage=result.get("query_coverage", 0),
+                answer_length=len(output),
+            )
+
+        return result
 
     def _check_context_was_used(self, output: str, metadata: dict) -> bool:
         """Check if output actually uses provided context - checks for source references."""
@@ -1083,14 +1225,6 @@ class PipelineExecutor:
             return False
 
         return has_citation or len(output) > 50
-
-        # Check output for failure patterns
-        output_lower = output.lower()
-        for pattern in GROUNDING_FAILURE_PATTERNS:
-            if pattern in output_lower:
-                return {"failed": True, "pattern": pattern}
-
-        return {"failed": False, "pattern": None}
 
     def _build_stage_messages(
         self,
@@ -1489,6 +1623,77 @@ async def _search_pipeline_prepare(
 
         # Store validation for prompt builder
         ctx.metadata["search_validation"] = search_context.validation_result
+
+        # FAIL-FAST: If insufficient search context, skip synthesis
+        if len(search_context.fetched_contents) < 2 or search_context.total_text_length < 1500:
+            ctx.metadata["search_skipped"] = True
+            ctx.metadata["search_error"] = "insufficient_search_context"
+            ctx.metadata["chunking_fallback"] = True
+            ctx.metadata["fallback_reason"] = "insufficient_search_context"
+            logger.warning(
+                "search_context_insufficient",
+                pages=len(search_context.fetched_contents),
+                text_length=search_context.total_text_length,
+            )
+            return
+
+        # NEW: Chunk-based relevance retrieval with quality control
+        from app.search.chunker import MAX_CHUNK_CONTEXT_CHARS, process_chunks
+
+        if search_context.filtered_contents:
+            chunk_context, chunk_metadata, chunking_stats = process_chunks(
+                query=user_query,
+                pages=search_context.filtered_contents,
+                top_k=5,
+                max_per_url=2,
+                max_context_chars=MAX_CHUNK_CONTEXT_CHARS,
+            )
+
+            ctx.metadata["search_context"]["chunking_stats"] = {
+                "total_chunks_created": chunking_stats.total_chunks_created,
+                "chunks_selected_top_k": chunking_stats.chunks_selected_top_k,
+                "average_chunk_score": chunking_stats.average_chunk_score,
+                "avg_keyword_overlap": chunking_stats.avg_keyword_overlap,
+                "dropped_chunks_count": chunking_stats.dropped_chunks_count,
+                "fallback_used": chunking_stats.fallback_used,
+                "fallback_reason": chunking_stats.fallback_reason,
+                "quality_zone": chunking_stats.quality_zone,
+                "cross_source_boost_applied": chunking_stats.cross_source_boost_applied,
+                "dedup_chunks_removed": chunking_stats.dedup_chunks_removed,
+                "total_context_chars": chunking_stats.total_context_chars,
+            }
+
+            if chunk_context and not chunking_stats.fallback_used:
+                ctx.metadata["chunk_context"] = chunk_context
+                ctx.metadata["selected_chunks"] = chunk_metadata
+                ctx.metadata["selected_chunks_data"] = [
+                    {"chunk_id": c["chunk_id"], "url": c["url"], "chunk_text": ""}
+                    for c in chunk_metadata
+                ]
+                ctx.metadata["chunking_enabled"] = True
+                logger.info(
+                    "chunking_success",
+                    total_pages=chunking_stats.total_pages,
+                    total_chunks=chunking_stats.total_chunks_created,
+                    selected=chunking_stats.chunks_selected_top_k,
+                    avg_score=chunking_stats.average_chunk_score,
+                    avg_keyword_overlap=chunking_stats.avg_keyword_overlap,
+                    quality_zone=chunking_stats.quality_zone,
+                    context_chars=len(chunk_context),
+                    cross_source_boost=chunking_stats.cross_source_boost_applied,
+                )
+            else:
+                ctx.metadata["chunking_enabled"] = False
+                ctx.metadata["chunking_fallback"] = True
+                ctx.metadata["fallback_reason"] = chunking_stats.fallback_reason
+                logger.warning(
+                    "chunking_fallback_used",
+                    reason=chunking_stats.fallback_reason,
+                    quality_zone=chunking_stats.quality_zone,
+                    total_chunks=chunking_stats.total_chunks_created,
+                )
+        else:
+            ctx.metadata["chunking_enabled"] = False
 
         # Log comprehensive results
         logger.info(

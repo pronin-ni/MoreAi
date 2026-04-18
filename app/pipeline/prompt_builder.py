@@ -10,8 +10,8 @@ from __future__ import annotations
 from app.pipeline.types import InputMapping, PipelineContext, StageRole
 
 # Grounding configuration
-SEARCH_CONTEXT_CHARS_PER_PAGE = 2500  # Increased from 1000 for better grounding
-SEARCH_MAX_PAGES = 3  # Top 3 pages only
+SEARCH_CONTEXT_CHARS_PER_PAGE = 2500
+SEARCH_MAX_PAGES = 3
 GROUNDING_FAILURE_PATTERNS = [
     "не могу",
     "уточните",
@@ -49,15 +49,12 @@ def build_stage_prompt(
     This is the controlled handoff mechanism — stages only receive
     what the input_mapping explicitly allows.
     """
-    # If stage has a custom prompt template, use it
     if prompt_template:
         return _render_template(prompt_template, stage_id, context)
 
-    # If input_mapping has custom prefix, use it with default suffix
     if input_mapping.custom_prompt_prefix:
         return _render_template(input_mapping.custom_prompt_prefix, stage_id, context)
 
-    # Default: pass through the previous output or original request
     prev_output = context.get_previous_output(stage_id)
     if prev_output:
         return prev_output
@@ -70,25 +67,19 @@ def _render_template(template: str, stage_id: str, context: PipelineContext) -> 
     original_request = context.original_user_input
     previous_output = context.get_previous_output(stage_id) or ""
 
-    # Get named stage outputs for multi-stage templates
     draft_output = _extract_stage_output(context, "draft")
     review_output = _extract_stage_output(context, "review")
     critique_notes = _extract_stage_output(context, "critique")
     verify_output = _extract_stage_output(context, "verify")
     initial_output = _extract_stage_output(context, "initial")
 
-    # Build stage summaries block if requested
     summaries = context.get_summary_text()
-
-    # All outputs concatenated if needed
     all_outputs = context.get_all_outputs_text()
 
-    # Search-related variables for search-answer pipeline
     search_results = context.metadata.get("search_results", [])
     search_content = context.metadata.get("search_content", {})
     context.metadata.get("search_skipped", False)
 
-    # Format search results for prompt
     search_sources_formatted = _format_search_sources(search_results, search_content)
 
     replacements: dict[str, str] = {
@@ -101,7 +92,6 @@ def _render_template(template: str, stage_id: str, context: PipelineContext) -> 
         "initial_output": initial_output,
         "stage_summaries": summaries,
         "all_outputs": all_outputs,
-        # Search variables
         "search_sources": search_sources_formatted,
         "search_results": _format_search_results_list(search_results),
     }
@@ -121,13 +111,18 @@ def build_search_stage_prompt(
     search_skipped: bool,
     validation_result: str | None = None,
     retry_count: int = 0,
+    content_pages: int = 0,
+    total_text_length: int = 0,
+    chunk_context: str | None = None,
 ) -> str:
     """Build prompt for search stage with search results.
 
     This is called from the executor when building the stage prompt
     for the search-answer pipeline.
+
+    Args:
+        chunk_context: Pre-processed chunk context (preferred over full-page)
     """
-    # Special handling: if it's a search stage, build default search prompt
     return _build_search_default_prompt(
         original_request,
         search_results,
@@ -135,7 +130,15 @@ def build_search_stage_prompt(
         search_skipped,
         validation_result,
         retry_count,
+        content_pages,
+        total_text_length,
+        chunk_context,
     )
+
+
+def set_chunk_context(chunk_context: str | None) -> None:
+    """Set the chunk context for the search prompt builder."""
+    build_search_stage_prompt._chunk_context = chunk_context
 
 
 def _format_search_sources(search_results: list[dict], search_content: dict[str, str]) -> str:
@@ -155,7 +158,6 @@ def _format_search_sources(search_results: list[dict], search_content: dict[str,
             truncated = snippet[:200] + "..." if len(snippet) > 200 else snippet
             parts.append(f"    {truncated}")
 
-        # Add fetched content if available
         if url in search_content:
             content = search_content[url][:1000]
             parts.append(f"    Content: {content}...")
@@ -184,11 +186,12 @@ def _build_search_default_prompt(
     search_retry_count: int = 0,
     content_pages: int = 0,
     total_text_length: int = 0,
+    chunk_context: str | None = None,
 ) -> str:
     """Build STRICT GROUNDED prompt for synthesize stage.
 
     Forces model to use provided context - no generic answers.
-    Increased context per page for better grounding.
+    Supports both chunk-based and legacy full-page contexts.
 
     Args:
         original_request: User's original query
@@ -197,10 +200,10 @@ def _build_search_default_prompt(
         search_skipped: Whether search was skipped
         validation_result: Validation result from validate_context
         search_retry_count: Number of search retries
-        content_pages: Number of pages with content (for grounding override)
+        content_pages: Number of pages with content
         total_text_length: Total char length of all content
+        chunk_context: Pre-processed chunk context (preferred)
     """
-    # Context presence override - if we have good context, force grounded mode
     has_sufficient_context = content_pages >= 2 and total_text_length >= 2000
 
     if search_skipped:
@@ -244,19 +247,19 @@ IMPORTANT:
 - Provide the FINAL ANSWER only
 """
 
-    # STRICT GROUNDED prompt - forces context usage
     if has_sufficient_context:
         return _build_strict_grounded_prompt(
             original_request,
             search_results,
             search_content,
+            chunk_context,
         )
 
-    # Fallback for insufficient context
     return _build_strict_grounded_prompt(
         original_request,
         search_results,
         search_content,
+        chunk_context,
     )
 
 
@@ -264,16 +267,55 @@ def _build_strict_grounded_prompt(
     original_request: str,
     search_results: list,
     search_content: dict,
+    chunk_context: str | None = None,
 ) -> str:
     """Build strict grounded prompt - MUST use context.
 
-    Rules:
-    - If context has relevant info → MUST use it
-    - NO "I don't know" if context exists
-    - NO clarifying questions
-    - NO prior knowledge (only context)
+    If chunk_context is provided, uses chunk-based RAG.
+    Otherwise falls back to legacy full-page context.
     """
-    # Build with INCREASED context (2500 chars per page)
+    if chunk_context:
+        return _build_chunk_grounded_prompt(original_request, chunk_context)
+
+    return _build_legacy_grounded_prompt(original_request, search_results, search_content)
+
+
+def _build_chunk_grounded_prompt(
+    original_request: str,
+    chunk_context: str,
+) -> str:
+    """Build grounded prompt using pre-processed chunk context."""
+    parts = [
+        "You are given extracted context chunks from multiple sources.",
+        "",
+        "RULES:",
+        "- Use ONLY the provided context chunks",
+        "- Prefer information repeated across multiple sources",
+        "- Cite sources as [1], [2], etc.",
+        "- Do NOT invent information outside context",
+        "- If context is insufficient, state what you don't know",
+        "- Provide DIRECT answer",
+        "- NO meta-commentary",
+        "",
+        "=== CONTEXT CHUNKS ===",
+        "",
+        chunk_context,
+        "",
+        "=== QUESTION ===",
+        original_request,
+        "",
+        "=== ANSWER ===",
+    ]
+
+    return "\n".join(parts)
+
+
+def _build_legacy_grounded_prompt(
+    original_request: str,
+    search_results: list,
+    search_content: dict,
+) -> str:
+    """Build strict grounded prompt with full-page context (legacy/fallback)."""
     parts = [
         "You MUST answer using ONLY the provided context below.",
         "",
@@ -290,7 +332,6 @@ def _build_strict_grounded_prompt(
         "",
     ]
 
-    # Add top 3 sources with MORE context (2500 chars)
     for i, r in enumerate(search_results[:SEARCH_MAX_PAGES], start=1):
         url = r.get("url", "")
         title = r.get("title", "Untitled")
@@ -299,9 +340,7 @@ def _build_strict_grounded_prompt(
         parts.append(f"URL: {url}")
 
         if url in search_content:
-            # INCREASED from 1000 to 2500 chars
             content = search_content[url][:SEARCH_CONTEXT_CHARS_PER_PAGE]
-            # Clean content - remove excessive whitespace
             content_clean = " ".join(content.split())
             parts.append(f"Content: {content_clean}")
         else:
@@ -321,3 +360,4 @@ def _build_strict_grounded_prompt(
     )
 
     return "\n".join(parts)
+

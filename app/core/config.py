@@ -466,6 +466,15 @@ class Settings(BaseSettings):
             object.__setattr__(self, "transport_feature_flags", TransportFeatureFlags())
         if "search" not in kwargs:
             object.__setattr__(self, "search", SearchSettings())
+            object.__setattr__(self, "pipeline", PipelineSettings())
+        if "openrouter" not in kwargs:
+            object.__setattr__(self, "openrouter", OpenRouterSettings())
+        if "model_discovery" not in kwargs:
+            object.__setattr__(self, "model_discovery", ModelDiscoverySettings())
+        if "transport_feature_flags" not in kwargs:
+            object.__setattr__(self, "transport_feature_flags", TransportFeatureFlags())
+        if "search" not in kwargs:
+            object.__setattr__(self, "search", SearchSettings())
 
 
 settings = Settings()
