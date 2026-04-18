@@ -5,7 +5,6 @@ Uses RoutingEngine to build a provider chain, then executes it with
 retry/fallback policy separation.
 """
 
-
 from app.agents.completion_service import agent_completion_service
 from app.core.diagnostics import record_failure, record_routing_decision
 from app.core.errors import InternalError, ServiceUnavailableError
@@ -22,7 +21,12 @@ from app.registry.unified import unified_registry
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
 from app.services.api_completion_service import api_completion_service
 from app.services.browser_completion_service import browser_completion_service
-from app.services.routing_engine import routing_engine
+from app.services.routing_engine import (
+    CandidateProvider,
+    RoutingPlan,
+    RoutingPolicy,
+    routing_engine,
+)
 
 logger = get_logger(__name__)
 
@@ -32,12 +36,27 @@ class ChatProxyService:
         self,
         request: ChatCompletionRequest,
         request_id: str,
+        forced_candidate: CandidateProvider | None = None,
     ) -> ChatCompletionResponse:
-        async with trace_span("chat_completion", model=request.model, request_id=request_id) as span:
+        async with trace_span(
+            "chat_completion", model=request.model, request_id=request_id
+        ) as span:
             span.add_event("request_received", message_count=str(len(request.messages)))
 
-            # Step 1: Build routing plan
-            plan = routing_engine.plan(request.model)
+            # Step 1: Build routing plan OR use forced candidate
+            if forced_candidate is not None:
+                plan = RoutingPlan(
+                    requested_model=request.model,
+                    candidates=[forced_candidate],
+                    all_candidates=[forced_candidate],
+                    policy=RoutingPolicy(),
+                    decision_trace=[
+                        f"Forced candidate: {forced_candidate.provider_id}/{forced_candidate.canonical_model_id}"
+                    ],
+                )
+                span.add_event("using_forced_candidate", provider=forced_candidate.provider_id)
+            else:
+                plan = routing_engine.plan(request.model)
 
             # Record routing decision metrics
             rule = plan.candidates[0].selection_rule if plan.candidates else "none"
@@ -64,9 +83,10 @@ class ChatProxyService:
 
             span.set_attribute("routing_rule", rule)
             span.set_attribute("candidate_count", str(len(plan.candidates)))
-            span.add_event("routing_plan_built", chain=" → ".join(
-                f"{c.transport}/{c.provider_id}" for c in plan.candidates
-            ))
+            span.add_event(
+                "routing_plan_built",
+                chain=" → ".join(f"{c.transport}/{c.provider_id}" for c in plan.candidates),
+            )
 
             # Record circuit breaker states
             self._record_circuit_breaker_states()
@@ -105,7 +125,9 @@ class ChatProxyService:
                             transport=candidate.transport,
                             status="success",
                             is_fallback=attempt_idx > 0,
-                            fallback_from=plan.candidates[0].provider_id if attempt_idx > 0 else None,
+                            fallback_from=plan.candidates[0].provider_id
+                            if attempt_idx > 0
+                            else None,
                         )
 
                         # Record success metrics
@@ -198,17 +220,20 @@ class ChatProxyService:
         """Execute a single candidate provider."""
         if candidate.transport == "browser":
             return await browser_completion_service.process_completion(
-                request, request_id, candidate.canonical_model_id,
+                request,
+                request_id,
+                candidate.canonical_model_id,
             )
         if candidate.transport == "api":
             # Resolve the API model properly from the registry
             resolved_model = unified_registry.resolve_model(candidate.canonical_model_id)
-            return await api_completion_service.process_completion(
-                request, resolved_model
-            )
+            return await api_completion_service.process_completion(request, resolved_model)
         if candidate.transport == "agent":
             return await agent_completion_service.process_completion(
-                request, request_id, candidate.canonical_model_id, candidate.provider_id,
+                request,
+                request_id,
+                candidate.canonical_model_id,
+                candidate.provider_id,
             )
 
         raise InternalError(
@@ -220,6 +245,7 @@ class ChatProxyService:
         """Record circuit breaker states for metrics."""
         try:
             from app.browser.execution.dispatcher import browser_dispatcher
+
             pool = browser_dispatcher._pool
             health_ctrl = pool.provider_health
             if health_ctrl:
@@ -233,6 +259,7 @@ class ChatProxyService:
         """Record active worker count for metrics."""
         try:
             from app.browser.execution.dispatcher import browser_dispatcher
+
             snapshot = browser_dispatcher.diagnostics()
             browser_active_workers.set(snapshot.get("active_workers", 0))
         except Exception:

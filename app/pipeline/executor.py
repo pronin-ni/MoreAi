@@ -714,6 +714,29 @@ class PipelineExecutor:
 
             # Execute with the selected candidate
             try:
+                # Build forced candidate for routing engine to use
+                from app.services.routing_engine import CandidateProvider
+
+                forced_candidate = CandidateProvider(
+                    provider_id=target_candidate.provider_id,
+                    transport=target_candidate.transport,
+                    canonical_model_id=target_candidate.model_id,
+                    enabled=True,
+                    available=True,
+                    visibility="public",
+                    is_selected=True,
+                    selection_rule="pipeline_selected",
+                )
+
+                logger.info(
+                    "stage_executing_with_candidate",
+                    request_id=request_id,
+                    stage_id=stage_def.stage_id,
+                    selected_model=target_candidate.model_id,
+                    provider_id=target_candidate.provider_id,
+                    transport=target_candidate.transport,
+                )
+
                 result = await self._execute_stage_model(
                     target_candidate.model_id,
                     ctx,
@@ -723,6 +746,7 @@ class PipelineExecutor:
                     stage_start,
                     trace,
                     request_id,
+                    forced_candidate=forced_candidate,
                 )
 
                 # Success
@@ -924,6 +948,7 @@ class PipelineExecutor:
         stage_start: float,
         trace: StageTrace,
         request_id: str,
+        forced_candidate=None,
     ) -> StageResult:
         """Execute a stage with a specific model through ChatProxyService."""
         # Create stage-specific request
@@ -936,9 +961,11 @@ class PipelineExecutor:
             stop=request.stop,
         )
 
-        # Execute through existing routing (ChatProxyService)
+        # Execute through ChatProxyService with forced candidate if provided
         stage_request_id = f"{request_id}:stage:{stage_def.stage_id}"
-        response = await chat_proxy_service.process_completion(stage_request, stage_request_id)
+        response = await chat_proxy_service.process_completion(
+            stage_request, stage_request_id, forced_candidate=forced_candidate
+        )
 
         # Extract output text
         output_text = ""
